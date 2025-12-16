@@ -36,10 +36,10 @@ The agent operates on a graph-based workflow defined in `agent.py`:
 
 ```mermaid
 graph TD
-    START --> Retriever[Retriever Node<br/>(Find Similar Questions)]
-    Retriever --> Processor[Processor Node<br/>(LLM Reasoning & Planning)]
-    Processor -->|Decide Tool| Condition{Requires Tool?}
-    Condition -->|Yes| Tools[Tool Node<br/>(Execute Actions)]
+    START --> Retriever["Retriever Node<br/>(Find Similar Questions)"]
+    Retriever --> Processor["Processor Node<br/>(LLM Reasoning & Planning)"]
+    Processor -->|Decide Tool| Condition{"Requires Tool?"}
+    Condition -->|Yes| Tools["Tool Node<br/>(Execute Actions)"]
     Condition -->|No| END
     Tools --> Processor
 ```
