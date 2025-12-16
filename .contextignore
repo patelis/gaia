@@ -1,0 +1,61 @@
+# .contextignore for Python Projects
+
+# ----------------------------
+# 1. SECURITY (Critical)
+# ----------------------------
+# Block environment variables and keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets.yaml
+gcloud-key.json
+
+# Block database files (Agent should inspect schema.sql, not the raw DB)
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
+# ----------------------------
+# 2. NOISE REDUCTION (Token Saving)
+# ----------------------------
+# Virtual Environments - The agent doesn't need to read library source code
+venv/
+.venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# Bytecode and Caches - Useless noise for an LLM
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ----------------------------
+# 3. DATA & LOGS
+# ----------------------------
+# Block large datasets that confuse the context window
+# (Instruct the agent to read 5-row samples instead if needed)
+data/
+*.csv
+*.parquet
+*.jsonl
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pip-log.txt
+
+# ----------------------------
+# 4. NOTEBOOKS (Optional)
+# ----------------------------
+# If you use Jupyter, raw output can be massive.
+# Consider ignoring checkpoints.
+.ipynb_checkpoints/
