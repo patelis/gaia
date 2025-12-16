@@ -21,8 +21,7 @@ from langchain_core.messages import HumanMessage, BaseMessage
 from supabase.client import Client, create_client
 
 from utils import load_prompt
-from tools import calculator, duck_web_search, wiki_search, arxiv_search, tavily_web_search
-from processors import file_processing_tools
+from tools import tools_list
 
 load_dotenv()
 
@@ -63,7 +62,8 @@ vector_store = SupabaseVectorStore(
     query_name="match_documents_langchain",
 )
 
-model_id = "Qwen/Qwen3-32B"
+# Updated to use Qwen 3 32B Instruct as requested
+model_id = "Qwen/Qwen3-32B-Instruct"
 llm = HuggingFaceEndpoint(
     repo_id=model_id,
     temperature=0,
@@ -74,19 +74,8 @@ llm = HuggingFaceEndpoint(
 
 agent = ChatHuggingFace(llm=llm)
 
-# Combine all tools: web search, calculator, and file processing
-tools = [
-    # Original tools
-    calculator, 
-    duck_web_search, 
-    wiki_search, 
-    arxiv_search, 
-    tavily_web_search,
-    # File processing tools
-    *file_processing_tools
-]
-
-agent_with_tools = agent.bind_tools(tools)
+# Bind all tools from the consolidated tools list
+agent_with_tools = agent.bind_tools(tools_list)
 
 
 # ============================================
@@ -124,14 +113,11 @@ def processor_node(state: AgentState) -> AgentState:
     """
     Processor Node: Main LLM agent that answers the question.
     
-    The agent has access to:
-    - File processing tools (read_pdf, read_csv, transcribe_audio, etc.)
-    - Web search tools (duck_web_search, wiki_search, arxiv_search, tavily_web_search)
-    - Calculator tool
-    
+    The agent has access to specific tools for different modalities.
     If a file is attached, information about it is included in the context.
     """
-    system_prompt = load_prompt("prompt.yaml")
+    # Updated path to prompt file in prompts/ directory
+    system_prompt = load_prompt("prompts/prompt.yaml")
     messages = state.get("messages", [])
     file_name = state.get("file_name", "")
     task_id = state.get("task_id", "")
@@ -174,27 +160,13 @@ def agent_graph():
                             |
                             v
                       processor_node (loop)
-    
-    Available tools:
-    - calculator: Mathematical calculations
-    - duck_web_search: Web search via DuckDuckGo
-    - wiki_search: Wikipedia search
-    - arxiv_search: Academic paper search
-    - tavily_web_search: Web search via Tavily
-    - read_pdf, read_docx, read_pptx, read_text_file: Document tools
-    - read_csv, read_excel, read_jsonld, read_pdb: Data tools
-    - transcribe_audio: Audio transcription
-    - read_python_file: Code reading
-    - extract_zip: Archive extraction
-    - describe_image: Image metadata
-    - read_file: Generic file reader
     """
     workflow = StateGraph(AgentState)
 
     # Add nodes
     workflow.add_node("retriever_node", retriever_node)
     workflow.add_node("processor_node", processor_node)
-    workflow.add_node("tools", ToolNode(tools))
+    workflow.add_node("tools", ToolNode(tools_list))
 
     # Add edges
     workflow.add_edge(START, "retriever_node")
