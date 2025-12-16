@@ -113,7 +113,7 @@ def analyze_image(image_path: str, question: str) -> str:
     """
     # Load system prompt for VLM
     system_prompt_msg = load_prompt("prompts/vlm_prompt.yaml")
-    system_prompt = system_prompt_msg.content
+    system_prompt = system_prompt_msg.prompt
     
     try:
         # Initialize VLM Endpoint

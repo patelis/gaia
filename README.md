@@ -36,17 +36,22 @@ The agent operates on a graph-based workflow defined in `agent.py`:
 
 ```mermaid
 graph TD
-    START --> Retriever["Retriever Node<br/>(Find Similar Questions)"]
-    Retriever --> Processor["Processor Node<br/>(LLM Reasoning & Planning)"]
+    START --> Retriever["Retriever Node<br/>(Hybrid: Vector + BM25 + RRF)"]
+    Retriever --> Reranker["Reranker Node<br/>(ModernBERT Cross-Encoder)"]
+    Reranker --> Processor["Processor Node<br/>(Qwen 3 32B)"]
     Processor -->|Decide Tool| Condition{"Requires Tool?"}
     Condition -->|Yes| Tools["Tool Node<br/>(Execute Actions)"]
     Condition -->|No| END
     Tools --> Processor
 ```
 
-1. **Retriever Node**: Queries Supabase to find similar historical questions/answers to provide few-shot context.
-2. **Processor Node**: The core brain. It inputs the question, context, and file info into the LLM. The LLM decides whether to answer directly or use a tool.
-3. **Tool Node**: Executes the requested tool (e.g., `read_excel`, `duck_web_search`) and returns the output to the Processor.
+1. **Retriever Node (Hybrid)**:
+    - **Vector Search**: Finds semantically similar questions in Supabase (using `gte-modernbert-base` embeddings).
+    - **BM25 Search**: Finds keyword-based matches in the local `metadata.jsonl` corpus using `bm25s`.
+    - **RRF Fusion**: Combines results from both methods using Reciprocal Rank Fusion.
+2. **Reranker Node**: Uses a ModernBERT Cross-Encoder (`tomaarsen/reranker-ModernBERT-base-gooaq-bm25-1m`) to select the top 3 most relevant examples.
+3. **Processor Node**: The core brain (Qwen 3 32B). It decides whether to answer directly or use a tool.
+4. **Tool Node**: Executes the requested tool (e.g., `read_excel`, `duck_web_search`) and returns results.
 
 ## 🛠️ Tools & Stack
 
