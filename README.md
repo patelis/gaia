@@ -46,10 +46,10 @@ graph TD
 ```
 
 1. **Retriever Node (Hybrid)**:
-    - **Vector Search**: Finds semantically similar questions in Supabase (using ![`Alibaba-NLP/gte-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) embeddings).
-    - **BM25 Search**: Finds keyword-based matches in the local `metadata.jsonl` corpus using ![`bm25s`](https://github.com/xhluca/bm25s).
+    - **Vector Search**: Finds semantically similar questions in Supabase (using [`Alibaba-NLP/gte-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) embeddings).
+    - **BM25 Search**: Finds keyword-based matches in the local `metadata.jsonl` corpus using [`bm25s`](https://github.com/xhluca/bm25s).
     - **RRF Fusion**: Combines results from both methods using Reciprocal Rank Fusion.
-2. **Reranker Node**: Uses a ModernBERT Cross-Encoder ([https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base]`Alibaba-NLP/gte-reranker-modernbert-base`) to select the top 3 most relevant examples.
+2. **Reranker Node**: Uses a ModernBERT Cross-Encoder ([`Alibaba-NLP/gte-reranker-modernbert-base`](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base)) to select the top 3 most relevant examples.
 3. **Processor Node**: The core brain (Qwen 3 32B). It decides whether to answer directly or use a tool.
 4. **Tool Node**: Executes the requested tool (e.g., `read_excel`, `duck_web_search`) and returns results.
 
