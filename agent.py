@@ -16,8 +16,6 @@ from langgraph.prebuilt import tools_condition, ToolNode
 
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-from langchain_community.vectorstores import SupabaseVectorStore
-from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from supabase.client import Client, create_client
 
@@ -41,25 +39,24 @@ supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
 
 llm_model_name = "Qwen/Qwen3-32B-Instruct"
 
-# BM25 Retriever
-bm25_retriever, bm25_corpus, bm25_ids = init_bm25_index(corpus_file=config["data"])
+enable_keyword_search = config["retrievers"]["enable_keyword_search"]
+enable_vector_search = config["retrievers"]["enable_vector_search"]
 
-# Embeddings for Vector Search
-embeddings = SentenceTransformer(model_name_or_path=config["vector_store"]["embedding_model_name"], cache_folder=config["models"]["cache_folder"])
+# BM25 Retriever
+bm25_retriever, bm25_corpus, bm25_ids = None, None, None
+if enable_keyword_search:
+    bm25_retriever, bm25_corpus, bm25_ids = init_bm25_index(corpus_file=config["data"])
+
+embeddings, supabase = None, None
+if enable_vector_search:
+    # Embeddings for Vector Search
+    embeddings = SentenceTransformer(model_name_or_path=config["models"]["embeddings"]["model_name"], cache_folder=config["models"]["cache_folder"])
+
+    # Supabase Vector Store
+    supabase: Client = create_client(supabase_url, supabase_key)
 
 # Reranker Model (ModernBERT Cross-Encoder)
 reranker = CrossEncoder(config["models"]["reranker"]["model_name"], cache_folder=config["models"]["cache_folder"])
-
-# Supabase Vector Store
-supabase: Client = create_client(supabase_url, supabase_key)
-
-vector_store = SupabaseVectorStore(
-    client=supabase,
-    embedding=embeddings,
-    table_name=config["vector_store"]["table"],
-    query_name=config["vector_store"]["query"],
-)
-
 
 # LLM for Agent
 llm = HuggingFaceEndpoint(
@@ -89,28 +86,33 @@ def retriever_node(state: AgentState) -> AgentState:
     
     question_content = messages[0].content
     
+    if not enable_vector_search and not enable_keyword_search:
+        print("No retrieval method enabled.")
+        return {"retrieved_docs": []}
+    
     # 1. Vector Search
     vector_docs = []
-    try:
-        response = supabase.rpc(
-            config["vector_store"]["query"],
-            {"query_embedding": embeddings.encode(question_content).tolist(), 
-             "match_count": config["vector_store"]["k"], 
-             "threshold": config["vector_store"]["threshold"]
-             }     
-        ).execute()
-        
-        vector_docs = response.data
-                
-    except Exception as e:
-        print(f"Vector search error: {e}")
+    if supabase and embeddings:
+        try:
+            response = supabase.rpc(
+                config["retrievers"]["vector_store"]["query"],
+                {"query_embedding": embeddings.encode(question_content).tolist(), 
+                 "match_count": config["retrievers"]["vector_store"]["k"], 
+                 "match_threshold": config["retrievers"]["vector_store"]["threshold"]
+                 }     
+            ).execute()
+
+            vector_docs = response.data
+
+        except Exception as e:
+            print(f"Vector search error: {e}")
         
     # 2. BM25 Search
     bm25_docs = []
     if bm25_retriever and bm25_corpus and bm25_ids:
         try:
             query_tokens = bm25s.tokenize([question_content], stopwords="en")
-            results, scores = bm25_retriever.retrieve(query_tokens, k=10)
+            results, scores = bm25_retriever.retrieve(query_tokens, k=config["retrievers"]["bm25"]["k"])
             indices = results[0]
             
             for i, idx in enumerate(indices):
@@ -126,18 +128,19 @@ def retriever_node(state: AgentState) -> AgentState:
     final_candidates = []
     if vector_docs and bm25_docs:
         fused = reciprocal_rank_fusion([vector_docs, bm25_docs])
-        final_candidates = [doc for doc, score in fused]
+        final_candidates = [id for id, doc, score in fused]
     else:
         final_candidates = vector_docs + bm25_docs
+        final_candidates = [doc["metadata"]["task_id"] for doc in final_candidates]
         
-    top_candidates = final_candidates[:config["retrievers"]["final_rrf_k"]]
+    top_candidates = final_candidates[:20]
     
     return {"retrieved_docs": top_candidates}
 
 
 def reranker_node(state: AgentState) -> AgentState:
     """
-    Reranker Node: Re-order candidates using ModernBERT Cross-Encoder and return top 3.
+    Reranker Node: Re-order candidates using Cross-Encoder and return top 3.
     """
     print("--- RERANKER NODE ---")
     candidates = state.get("retrieved_docs", [])
