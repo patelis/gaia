@@ -1,0 +1,42 @@
+# Project: LangGraph HF Agent for GAIA
+# config.yaml
+data: "data/metadata.jsonl"  # Path to the GAIA documents dataset
+retrievers:
+  enable_vector_search: true # Enable vector-based document retrieval
+  enable_keyword_search: true # Enable keyword-based document retrieval
+  final_rrf_k: 3          # Number of top documents to consider after reciprocal rank fusion
+  vector_store:
+    embedding_model_name: "Alibaba-NLP/gte-modernbert-base"  # Hugging Face embedding model ID
+    table: "gaia_documents"               # Type of vector store (e.g., faiss, chroma)
+    query: "match_documents"              # Method to query the vector store
+    k: 10                                 # Number of top documents to retrieve
+    threshold: 0.5                       # Similarity threshold for document retrieval
+models:
+  cache_folder: "./models/hf_cache"  # Directory to cache Hugging Face models
+  llm:
+    model_name: "meta-llama/Llama-3-8B-Instruct"  # Hugging Face model ID                        # cpu, cuda, or mps (for Mac)
+    parameters:
+      temperature: 0
+      repetition_penalty: 1.3
+      provider: "auto"
+  vlm:
+    name: "meta-llama/Llama-3-8B-Instruct"  # Hugging Face model ID
+    #device: "cuda"                          # cpu, cuda, or mps (for Mac)
+    #parameters:
+    #  temperature: 0.7
+    #  max_new_tokens: 512
+    #  repetition_penalty: 1.1
+  reranker:
+    model_name: "Alibaba-NLP/gte-reranker-modernbert-base"  # Hugging Face model ID for reranking
+
+graph:
+  recursion_limit: 20                     # Max steps before the graph terminates
+  thread_id: "default-user"               # Default session identifier
+  memory_type: "sqlite"                   # Persistence method for checkpointers
+
+paths:
+  cache_dir: "./models/hf_cache"         # Where to save Hugging Face weights
+  output_dir: "./results"
+
+prompts:
+  system_role: "You are a helpful AI assistant running on LangGraph."

@@ -4,7 +4,11 @@ import bm25s
 import yaml
 from pathlib import Path
 from langchain_core.messages import SystemMessage
-from langchain_core.documents import Document
+
+
+def load_config(path="config.yaml"):
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
 
 
 def load_prompt(prompt_location: str) -> SystemMessage:
@@ -31,11 +35,14 @@ def init_bm25_index(corpus_file = "data/metadata.jsonl"):
             return None, []
             
         corpus_texts = []
+        corpus_ids = []
         with open(corpus_file, "r") as f:
             for line in f:
                 item = json.loads(line)
-                text = f"Question : {item.get('Question', '')}\n\nFinal answer : {item.get('Final answer', '')}"
+                text = item.get('Question', '')
+                task_id = item.get('task_id', '')
                 corpus_texts.append(text)
+                corpus_ids.append(task_id)
                 
         corpus_tokens = bm25s.tokenize(corpus_texts, stopwords="en", stemmer=None)
         
@@ -43,13 +50,13 @@ def init_bm25_index(corpus_file = "data/metadata.jsonl"):
         retriever_bm25.index(corpus_tokens)
         
         print(f"BM25 Index initialized with {len(corpus_texts)} documents.")
-        return retriever_bm25, corpus_texts
+        return retriever_bm25, corpus_texts, corpus_ids
     except Exception as e:
         print(f"Error initializing BM25: {e}")
         return None, []
     
 
-def reciprocal_rank_fusion(results: list[list[Document]], k=60) -> list[tuple[Document, float]]:
+def reciprocal_rank_fusion(results: list[list[dict]], k=60) -> list[tuple[dict, float]]:
     """
     Fuse multiple ranked lists using Reciprocal Rank Fusion (RRF).
     """
@@ -57,10 +64,11 @@ def reciprocal_rank_fusion(results: list[list[Document]], k=60) -> list[tuple[Do
     
     for rank_list in results:
         for rank, doc in enumerate(rank_list):
-            doc_str = doc.page_content
-            if doc_str not in fused_scores:
-                fused_scores[doc_str] = {"doc": doc, "score": 0.0}
-            fused_scores[doc_str]["score"] += 1.0 / (k + rank + 1)
+            doc_id = doc["metadata"]["task_id"]
+            doc_content = doc["content"]
+            if doc_id not in fused_scores:
+                fused_scores[doc_id] = {"id": doc_id, "content": doc_content, "score": 0.0}
+            fused_scores[doc_id]["score"] += 1.0 / (k + rank + 1)
             
     sorted_results = sorted(fused_scores.values(), key=lambda x: x["score"], reverse=True)
-    return [(item["doc"], item["score"]) for item in sorted_results]
+    return [(item["id"], item["content"], item["score"]) for item in sorted_results]

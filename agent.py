@@ -8,64 +8,47 @@ This module defines a LangGraph agent that can:
 """
 
 import os
-from typing import Annotated, TypedDict, List
+import bm25s
 from dotenv import load_dotenv
 
 from langgraph.graph import START, END, StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.prebuilt import tools_condition, ToolNode
 
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint, HuggingFaceEmbeddings
+from sentence_transformers import SentenceTransformer, CrossEncoder
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_community.vectorstores import SupabaseVectorStore
 from langchain_core.documents import Document
-from langchain_core.messages import HumanMessage, BaseMessage
+from langchain_core.messages import HumanMessage
 from supabase.client import Client, create_client
-from sentence_transformers import CrossEncoder
 
-from utils import load_prompt, init_bm25_index, reciprocal_rank_fusion
+from utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion
 from tools import tools_list
+from states import AgentState
 
 load_dotenv()
-
-
-# ============================================
-# State Definition
-# ============================================
-
-class AgentState(TypedDict):
-    """
-    State schema for the GAIA agent graph.
-    
-    Attributes:
-        messages: List of conversation messages (auto-accumulated via add_messages)
-        task_id: The GAIA task identifier for the current question
-        file_name: Name of the attached file (empty string if no file)
-        retrieved_docs: List of candidate documents from the retriever node
-    """
-    messages: Annotated[list[BaseMessage], add_messages]
-    task_id: str
-    file_name: str
-    retrieved_docs: List[Document]
-
-
-# ============================================
-# Model & Embeddings Setup
-# ============================================
+config = load_config()
 
 # Environment details and others
 hf_key = os.getenv("HF_INFERENCE_KEY")
 supabase_url = os.getenv("SUPABASE_URL")
 supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-supabase_table = "gaia_documents"
-supabase_query = "match_documents_langchain"
+
+# ============================================
+# Model & Embeddings Setup
+# ============================================
 
 # Model List
-embeddings_model_name = "Alibaba-NLP/gte-modernbert-base"
-reranker_model_name = "Alibaba-NLP/gte-reranker-modernbert-base"
+
 llm_model_name = "Qwen/Qwen3-32B-Instruct"
 
+# BM25 Retriever
+bm25_retriever, bm25_corpus, bm25_ids = init_bm25_index(corpus_file=config["data"])
+
 # Embeddings for Vector Search
-embeddings = HuggingFaceEmbeddings(model_name=embeddings_model_name)
+embeddings = SentenceTransformer(model_name_or_path=config["vector_store"]["embedding_model_name"], cache_folder=config["models"]["cache_folder"])
+
+# Reranker Model (ModernBERT Cross-Encoder)
+reranker = CrossEncoder(config["models"]["reranker"]["model_name"], cache_folder=config["models"]["cache_folder"])
 
 # Supabase Vector Store
 supabase: Client = create_client(supabase_url, supabase_key)
@@ -73,23 +56,17 @@ supabase: Client = create_client(supabase_url, supabase_key)
 vector_store = SupabaseVectorStore(
     client=supabase,
     embedding=embeddings,
-    table_name=supabase_table,
-    query_name=supabase_query,
+    table_name=config["vector_store"]["table"],
+    query_name=config["vector_store"]["query"],
 )
 
-# BM25 Retriever
-bm25_retriever, bm25_corpus = init_bm25_index()
 
-# Reranker Model (ModernBERT Cross-Encoder)
-reranker = CrossEncoder(reranker_model_name)
-
-# LLM Setup
-
+# LLM for Agent
 llm = HuggingFaceEndpoint(
-    repo_id=llm_model_name,
-    temperature=0,
-    repetition_penalty=1.03,
-    provider="auto",
+    repo_id=config["models"]["llm"]["model_name"],
+    temperature=config["models"]["llm"]["parameters"]["temperature"],
+    repetition_penalty=config["models"]["llm"]["parameters"]["repetition_penalty"],
+    provider=config["models"]["llm"]["parameters"]["provider"],
     huggingfacehub_api_token=hf_key
 )
 
@@ -115,21 +92,33 @@ def retriever_node(state: AgentState) -> AgentState:
     # 1. Vector Search
     vector_docs = []
     try:
-        vector_docs = vector_store.similarity_search(question_content, k=10)
+        response = supabase.rpc(
+            config["vector_store"]["query"],
+            {"query_embedding": embeddings.encode(question_content).tolist(), 
+             "match_count": config["vector_store"]["k"], 
+             "threshold": config["vector_store"]["threshold"]
+             }     
+        ).execute()
+        
+        vector_docs = response.data
+                
     except Exception as e:
         print(f"Vector search error: {e}")
         
     # 2. BM25 Search
     bm25_docs = []
-    if bm25_retriever and bm25_corpus:
+    if bm25_retriever and bm25_corpus and bm25_ids:
         try:
             query_tokens = bm25s.tokenize([question_content], stopwords="en")
             results, scores = bm25_retriever.retrieve(query_tokens, k=10)
             indices = results[0]
             
-            for idx in indices:
-                doc_content = bm25_corpus[idx]
-                bm25_docs.append(Document(page_content=doc_content, metadata={"source": "bm25"}))
+            for i, idx in enumerate(indices):
+                content = bm25_corpus[idx]
+                task_id = bm25_ids[idx]
+                score = scores[0][i]
+                bm25_dict = {"content":content, "metadata": {"source": "bm25_search", "task_id": task_id, "score": score}}
+                bm25_docs.append(bm25_dict)
         except Exception as e:
             print(f"BM25 search error: {e}")
 
@@ -141,7 +130,7 @@ def retriever_node(state: AgentState) -> AgentState:
     else:
         final_candidates = vector_docs + bm25_docs
         
-    top_candidates = final_candidates[:20]
+    top_candidates = final_candidates[:config["retrievers"]["final_rrf_k"]]
     
     return {"retrieved_docs": top_candidates}
 

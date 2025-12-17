@@ -59,3 +59,8 @@ pip-log.txt
 # If you use Jupyter, raw output can be massive.
 # Consider ignoring checkpoints.
 .ipynb_checkpoints/
+
+# ----------------------------
+# 5. MODEL CHECKPOINTS (Optional)
+# ----------------------------
+models/*

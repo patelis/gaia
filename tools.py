@@ -561,9 +561,9 @@ def read_file(file_path: str) -> str:
         '.py': lambda p: read_python_file.invoke(p),
         '.mp3': lambda p: transcribe_audio.invoke(p),
         '.zip': lambda p: extract_zip.invoke(p),
-        '.jpg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}),
-        '.jpeg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}),
-        '.png': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}),
+        '.jpg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}), #??
+        '.jpeg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}), #??
+        '.png': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}), #??
     }
     
     processor = processors.get(ext)
@@ -594,7 +594,7 @@ tools_list = [
     transcribe_audio,
     read_python_file,
     extract_zip,
-    describe_image,
+    # describe_image,
     analyze_image,
     read_file,
 ]
