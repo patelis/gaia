@@ -15,6 +15,7 @@ accelerate>=1.0.0
 sentence-transformers>=5.2.0
 supabase>=2.25.1
 pgvector
+bms25
 
 # Document processing
 pypdf>=4.0.0
