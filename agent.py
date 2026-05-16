@@ -92,9 +92,14 @@ def file_downloader_node(state: AgentState) -> AgentState:
     if not file_name or not task_id:
         return {"file_path": ""}
 
+    safe_name = Path(file_name).name
+    if not safe_name:
+        print(f"File download skipped: invalid file_name '{file_name}'")
+        return {"file_path": ""}
+
     save_dir = Path(config["api"]["files_dir"]) / task_id
     save_dir.mkdir(parents=True, exist_ok=True)
-    local_path = save_dir / file_name
+    local_path = save_dir / safe_name
 
     if local_path.exists():
         print(f"File already cached: {local_path}")
@@ -104,8 +109,11 @@ def file_downloader_node(state: AgentState) -> AgentState:
     try:
         response = requests.get(file_url, timeout=30)
         response.raise_for_status()
+        if not response.content:
+            print(f"File download failed ({file_url}): empty response body")
+            return {"file_path": ""}
         local_path.write_bytes(response.content)
-        print(f"Downloaded: {file_name} → {local_path}")
+        print(f"Downloaded: {safe_name} → {local_path}")
         return {"file_path": str(local_path)}
     except Exception as e:
         print(f"File download failed ({file_url}): {e}")
