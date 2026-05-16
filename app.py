@@ -1,4 +1,5 @@
 import os
+import re
 import gradio as gr
 import requests
 import inspect
@@ -23,7 +24,9 @@ class BasicAgent:
             "task_id": task_id,
             "file_name": file_name
         })
-        fixed_answer = response['messages'][-1].content[16:]
+        content = response['messages'][-1].content
+        match = re.search(r'FINAL ANSWER:\s*(.*)', content, re.DOTALL)
+        fixed_answer = match.group(1).strip() if match else content.strip()
         print(f"Agent returning fixed answer: {fixed_answer}")
         return fixed_answer
 

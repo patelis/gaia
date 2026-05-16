@@ -22,29 +22,33 @@ def load_prompt(prompt_location: str) -> SystemMessage:
             return SystemMessage(content="You are a helpful assistant.")
 
 
-def get_file_extension(file_path: str) -> str:
-    """Extract file extension from path."""
-    return Path(file_path).suffix.lower()
-
 
 def init_bm25_index(corpus_file = "data/metadata.jsonl"):
     """BM25 Index Initialization (Local Corpus)"""
     try:
         if not os.path.exists(corpus_file):
             print(f"Warning: {corpus_file} not found. BM25 will use empty index.")
-            return None, []
+            return None, [], []
             
-        corpus_texts = []
+        search_texts = []  # question-only — used for BM25 indexing
+        corpus_texts = []  # Q+A+Steps — returned for context injection
         corpus_ids = []
         with open(corpus_file, "r") as f:
             for line in f:
                 item = json.loads(line)
-                text = item.get('Question', '')
-                task_id = item.get('task_id', '')
-                corpus_texts.append(text)
-                corpus_ids.append(task_id)
-                
-        corpus_tokens = bm25s.tokenize(corpus_texts, stopwords="en", stemmer=None)
+                question = item.get('Question', '')
+                answer = item.get('Final answer', '')
+                steps = item.get('Annotator Metadata', {}).get('Steps', '')
+                search_texts.append(question)
+                parts = [f"Question: {question}"]
+                if answer:
+                    parts.append(f"Final Answer: {answer}")
+                if steps:
+                    parts.append(f"Solution Steps: {steps}")
+                corpus_texts.append("\n".join(parts))
+                corpus_ids.append(item.get('task_id', ''))
+
+        corpus_tokens = bm25s.tokenize(search_texts, stopwords="en", stemmer=None)
         
         retriever_bm25 = bm25s.BM25()
         retriever_bm25.index(corpus_tokens)
@@ -53,7 +57,7 @@ def init_bm25_index(corpus_file = "data/metadata.jsonl"):
         return retriever_bm25, corpus_texts, corpus_ids
     except Exception as e:
         print(f"Error initializing BM25: {e}")
-        return None, []
+        return None, [], []
     
 
 def reciprocal_rank_fusion(results: list[list[dict]], k=60) -> list[tuple[dict, float]]:

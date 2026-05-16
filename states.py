@@ -10,14 +10,16 @@ from langchain_core.documents import Document
 class AgentState(TypedDict):
     """
     State schema for the GAIA agent graph.
-    
+
     Attributes:
         messages: List of conversation messages (auto-accumulated via add_messages)
         task_id: The GAIA task identifier for the current question
         file_name: Name of the attached file (empty string if no file)
+        file_path: Local filesystem path to the downloaded file (empty if no file or download failed)
         retrieved_docs: List of candidate documents from the retriever node
     """
     messages: Annotated[list[BaseMessage], add_messages]
     task_id: str
     file_name: str
+    file_path: str
     retrieved_docs: List[Document]

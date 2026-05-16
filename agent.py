@@ -9,6 +9,8 @@ This module defines a LangGraph agent that can:
 
 import os
 import bm25s
+import requests
+from pathlib import Path
 from dotenv import load_dotenv
 
 from langgraph.graph import START, END, StateGraph
@@ -16,7 +18,7 @@ from langgraph.prebuilt import tools_condition, ToolNode
 
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from supabase.client import Client, create_client
 
 from utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion
@@ -35,10 +37,6 @@ supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
 # Model & Embeddings Setup
 # ============================================
 
-# Model List
-
-llm_model_name = "Qwen/Qwen3-32B-Instruct"
-
 enable_keyword_search = config["retrievers"]["enable_keyword_search"]
 enable_vector_search = config["retrievers"]["enable_vector_search"]
 
@@ -46,6 +44,10 @@ enable_vector_search = config["retrievers"]["enable_vector_search"]
 bm25_retriever, bm25_corpus, bm25_ids = None, None, None
 if enable_keyword_search:
     bm25_retriever, bm25_corpus, bm25_ids = init_bm25_index(corpus_file=config["data"])
+
+bm25_id_to_text = {}
+if bm25_corpus and bm25_ids:
+    bm25_id_to_text = dict(zip(bm25_ids, bm25_corpus))
 
 embeddings, supabase = None, None
 if enable_vector_search:
@@ -70,10 +72,45 @@ llm = HuggingFaceEndpoint(
 agent_llm = ChatHuggingFace(llm=llm)
 agent_with_tools = agent_llm.bind_tools(tools_list)
 
+_system_prompt = load_prompt("prompts/prompt.yaml")
+_thinking_enabled = config["models"]["llm"]["parameters"].get("thinking_enabled", True)
+
 
 # ============================================
 # Graph Nodes
 # ============================================
+
+def file_downloader_node(state: AgentState) -> AgentState:
+    """
+    Download the task file from the scoring API if one is associated with the question.
+    Saves to a local directory and stores the path in state.
+    """
+    print("--- FILE DOWNLOADER NODE ---")
+    file_name = state.get("file_name", "")
+    task_id = state.get("task_id", "")
+
+    if not file_name or not task_id:
+        return {"file_path": ""}
+
+    save_dir = Path(config["api"]["files_dir"]) / task_id
+    save_dir.mkdir(parents=True, exist_ok=True)
+    local_path = save_dir / file_name
+
+    if local_path.exists():
+        print(f"File already cached: {local_path}")
+        return {"file_path": str(local_path)}
+
+    file_url = f"{config['api']['base_url']}/files/{task_id}"
+    try:
+        response = requests.get(file_url, timeout=30)
+        response.raise_for_status()
+        local_path.write_bytes(response.content)
+        print(f"Downloaded: {file_name} → {local_path}")
+        return {"file_path": str(local_path)}
+    except Exception as e:
+        print(f"File download failed ({file_url}): {e}")
+        return {"file_path": ""}
+
 
 def retriever_node(state: AgentState) -> AgentState:
     """
@@ -151,13 +188,14 @@ def reranker_node(state: AgentState) -> AgentState:
         
     question = messages[0].content
     
-    # Deduplicate candidates
+    # Deduplicate candidates — candidates are task_id strings; resolve to text via corpus lookup
     unique_candidates = []
     seen_content = set()
-    for doc in candidates:
-        if doc.page_content not in seen_content:
-            unique_candidates.append(doc.page_content)
-            seen_content.add(doc.page_content)
+    for task_id in candidates:
+        text = bm25_id_to_text.get(task_id)
+        if text and text not in seen_content:
+            unique_candidates.append(text)
+            seen_content.add(text)
             
     if not unique_candidates:
         return {"messages": []}
@@ -173,7 +211,7 @@ def reranker_node(state: AgentState) -> AgentState:
             reverse=True
         )
         
-        top_k = 3
+        top_k = config["retrievers"]["final_rrf_k"]
         top_results = scored_docs[:top_k]
         
         context_str = "Here are similar questions and answers for reference:\n\n"
@@ -197,17 +235,23 @@ def processor_node(state: AgentState) -> AgentState:
     """
     Processor Node: Main LLM agent that answers the question.
     """
-    system_prompt = load_prompt("prompts/prompt.yaml")
+    prompt_content = _system_prompt.content + ("" if _thinking_enabled else "\n/no_think")
+    system_prompt = SystemMessage(content=prompt_content)
     messages = state.get("messages", [])
     file_name = state.get("file_name", "")
-    task_id = state.get("task_id", "")
-    
+    file_path = state.get("file_path", "")
+
     full_messages = [system_prompt]
-    
+
     if file_name:
-        file_msg = HumanMessage(
-            content=f"Note: A file named '{file_name}' is associated with this question (task_id: {task_id})."
-        )
+        if file_path:
+            file_msg = HumanMessage(
+                content=f"Note: A file named '{file_name}' is associated with this question. It is available at path: {file_path}"
+            )
+        else:
+            file_msg = HumanMessage(
+                content=f"Note: A file named '{file_name}' is associated with this question, but it could not be downloaded."
+            )
         full_messages.append(file_msg)
     
     full_messages.extend(messages)
@@ -228,17 +272,20 @@ def agent_graph():
     workflow = StateGraph(AgentState)
 
     # Add nodes
+    workflow.add_node("file_downloader_node", file_downloader_node)
     workflow.add_node("retriever_node", retriever_node)
     workflow.add_node("reranker_node", reranker_node)
     workflow.add_node("processor_node", processor_node)
     workflow.add_node("tools", ToolNode(tools_list))
 
     # Add edges
-    workflow.add_edge(START, "retriever_node")
+    workflow.add_edge(START, "file_downloader_node")
+    workflow.add_edge("file_downloader_node", "retriever_node")
     workflow.add_edge("retriever_node", "reranker_node")
     workflow.add_edge("reranker_node", "processor_node")
     workflow.add_edge("tools", "processor_node")    
     workflow.add_conditional_edges("processor_node", tools_condition, {"tools": "tools", END: END})
     
     
-    return workflow.compile()
+    compiled = workflow.compile()
+    return compiled.with_config({"recursion_limit": config["graph"]["recursion_limit"]})

@@ -1,16 +1,41 @@
 import os
 import json
+import base64
 from pathlib import Path
-from typing import Annotated
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_community.document_loaders import WikipediaLoader
 from langchain_community.document_loaders import ArxivLoader
 from langchain_core.tools import tool
-from langchain_huggingface import HuggingFaceEndpoint
 
-from utils import load_prompt
+from huggingface_hub import InferenceClient
+
+from utils import load_config, load_prompt
+
+_config = load_config()
+_vlm_model_name = _config["models"]["vlm"]["model_name"]
+_vlm_system_prompt = load_prompt("prompts/vlm_prompt.yaml").content
+_asr_model_name = _config["models"]["asr"]["model_name"]
+_hf_client = InferenceClient(token=os.getenv("HF_INFERENCE_KEY"))
+
+_ddg_search = None
+_tavily_search = None
+
+def _get_ddg():
+    global _ddg_search
+    if _ddg_search is None:
+        _ddg_search = DuckDuckGoSearchRun()
+    return _ddg_search
+
+def _get_tavily():
+    global _tavily_search
+    if _tavily_search is None:
+        _tavily_search = TavilySearchResults(max_results=3)
+    return _tavily_search
 
 # ============================================
 # Basic Tools
@@ -47,7 +72,7 @@ def duck_web_search(query: str) -> str:
     Args:
         query: The search query.
     """
-    search = DuckDuckGoSearchRun().invoke(query=query)
+    search = _get_ddg().invoke(query=query)
     
     return {"duckduckgo_web_search": search}
 
@@ -85,14 +110,70 @@ def tavily_web_search(query: str) -> str:
     
     Args:
         query: The search query."""
-    search_engine = TavilySearchResults(max_results=3)
-    search_documents = search_engine.invoke(input=query)
+    search_documents = _get_tavily().invoke(input=query)
     web_results = "\n\n---\n\n".join(
         [
             f'Document title: {document["title"]}. Contents: {document["content"]}. Relevance Score: {document["score"]}'
             for document in search_documents
         ])
     return {"web_results": web_results}
+
+
+@tool
+def fetch_webpage(url: str) -> str:
+    """
+    Fetch and extract the main text content from a webpage.
+    Use this when a search result points to a specific URL you need to read in full.
+
+    Args:
+        url: The full URL of the page to fetch.
+
+    Returns:
+        The extracted text content of the page.
+    """
+    import trafilatura
+    try:
+        downloaded = trafilatura.fetch_url(url)
+        if downloaded is None:
+            return f"Error: Could not fetch {url}"
+        text = trafilatura.extract(downloaded, include_tables=True, include_links=False)
+        if text is None:
+            return f"Error: Could not extract content from {url}"
+        return f"Page content from {url}:\n\n{text}"
+    except Exception as e:
+        return f"Error fetching webpage: {e}"
+
+
+@tool
+def python_eval(code: str) -> str:
+    """
+    Execute a Python code snippet and return its stdout output.
+    Use this when a question asks what a script outputs, or when computation requires running code.
+
+    Args:
+        code: Python source code to execute.
+
+    Returns:
+        The stdout output of the code, or an error/timeout message.
+    """
+    import subprocess
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+            f.write(code)
+            tmp_path = f.name
+        result = subprocess.run(
+            ['python3', tmp_path],
+            capture_output=True, text=True, timeout=30
+        )
+        os.unlink(tmp_path)
+        if result.returncode == 0:
+            return f"Output:\n{result.stdout}"
+        return f"Error (exit {result.returncode}):\n{result.stderr}"
+    except subprocess.TimeoutExpired:
+        return "Error: execution timed out (30s limit)"
+    except Exception as e:
+        return f"Error: {e}"
 
 
 # ============================================
@@ -111,66 +192,32 @@ def analyze_image(image_path: str, question: str) -> str:
     Returns:
         A detailed description or answer based on the visual content.
     """
-    # Load system prompt for VLM
-    system_prompt_msg = load_prompt("prompts/vlm_prompt.yaml")
-    system_prompt = system_prompt_msg.prompt
-    
     try:
-        # Initialize VLM Endpoint
-        # Using Qwen/Qwen3-VL-32B-Instruct as requested
-        # Note: If this model is not available via standard Inference API, fallback to Qwen/Qwen2-VL-72B-Instruct or similar may be needed.
-        # Assuming Qwen/Qwen3-VL-32B-Instruct is supported.
-        vlm_llm = HuggingFaceEndpoint(
-            repo_id="Qwen/Qwen3-VL-32B-Instruct",
-            task="image-text-to-text",  # or text-generation depending on API specifics, usually visual models handle this
-            huggingfacehub_api_token=os.getenv("HF_INFERENCE_KEY"),
-            temperature=0.1
-        )
-        
-        # Construct the prompt (this is a simplified text-based interaction, 
-        # real VLM API calls might need specific formatting or image encoding 
-        # depending on the `HuggingFaceEndpoint` support for multi-modal).
-        # Standard HF Endpoint for VLMs often expects a specific processed input or URL.
-        # For this implementation, we assume the endpoint can handle local paths or we provide a text description placeholder if strictly text-only.
-        # Ideally, we should use a library that supports the specific model's API format.
-        # Since we are using standard `HuggingFaceEndpoint`, we might need to rely on the model parsing text-encoded images or just URLs.
-        # BUT, standard text-generation endpoint might not support image upload directly.
-        # *Correction*: `HuggingFaceEndpoint` in LangChain is primarily for text-generation.
-        # For VLM, we often use specific API calls or a custom chain.
-        # Given constraints, we will attempt to use it, but if it fails, we warn.
-        # A more robust way for VLM via API is using the raw `huggingface_hub` InferenceClient.
-        
-        from huggingface_hub import InferenceClient
-        client = InferenceClient(token=os.getenv("HF_INFERENCE_KEY"))
-        
-        # Check if image path is valid
         if not os.path.exists(image_path):
             return f"Error: Image file not found at {image_path}"
-        
-        # Generic inference call for VLM
-        # This is model-specific. Qwen-VL often expects a conversation format.
-        # We will try the chat completion style if supported, else the tailored API.
-        
+
+        with open(image_path, "rb") as img_file:
+            image_data = base64.b64encode(img_file.read()).decode("utf-8")
+        ext = Path(image_path).suffix.lower().lstrip(".")
+        mime_type = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+        image_url = f"data:{mime_type};base64,{image_data}"
+
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "url": image_path},  # InferenceClient usually handles local paths if passed correctly or needs base64?
-                    # Actually InferenceClient.chat_completion handles local paths as "path/to/image" often in recent versions, 
-                    # or strictly URLs/base64. Let's assume it handles file paths or we need to upload.
-                    # For safety in this environment, we will describe the intent.
-                    {"type": "text", "text": f"{system_prompt}\n\nQuestion: {question}"}
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "text", "text": f"{_vlm_system_prompt}\n\nQuestion: {question}"}
                 ]
             }
         ]
-        
-        # Note: Qwen3-VL-32B-Instruct ID usage
-        output = client.chat_completion(
+
+        output = _hf_client.chat_completion(
             messages=messages,
-            model="Qwen/Qwen3-VL-32B-Instruct", 
+            model=_vlm_model_name,
             max_tokens=1000
         )
-        
+
         return output.choices[0].message.content
 
     except Exception as e:
@@ -222,8 +269,19 @@ def read_docx(file_path: str) -> str:
     
     try:
         doc = Document(file_path)
+        text_parts = []
+
         paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
-        return "\n".join(paragraphs) if paragraphs else "[Empty document]"
+        if paragraphs:
+            text_parts.append("\n".join(paragraphs))
+
+        for i, table in enumerate(doc.tables):
+            rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
+            rows = [r for r in rows if r.strip()]
+            if rows:
+                text_parts.append(f"--- Table {i+1} ---\n" + "\n".join(rows))
+
+        return "\n\n".join(text_parts) if text_parts else "[Empty document]"
     except Exception as e:
         return f"Error reading DOCX: {e}"
 
@@ -296,17 +354,12 @@ def read_csv(file_path: str) -> str:
     try:
         df = pl.read_csv(file_path)
         
-        output = f"""CSV File Summary:
-- Total rows: {len(df)}
-- Columns: {df.columns}
-- Schema: {dict(df.schema)}
-
-Data (first 20 rows):
-{df.head(20)}
-"""
+        output = f"CSV File — {len(df)} rows, {len(df.columns)} columns\n"
+        output += f"Columns: {df.columns}\n\n"
+        output += f"Column Statistics:\n{df.describe()}\n\n"
+        output += f"Data (first 20 rows):\n{df.head(20)}"
         if len(df) <= 50:
-            output += f"\nComplete data:\n{df}"
-        
+            output += f"\n\nComplete data:\n{df}"
         return output
     except Exception as e:
         return f"Error reading CSV: {e}"
@@ -325,20 +378,26 @@ def read_excel(file_path: str, sheet_id: int = 0) -> str:
         Summary of the Excel sheet including schema, row count, and data preview.
     """
     import polars as pl
-    
+    import openpyxl
+
+    try:
+        wb = openpyxl.load_workbook(file_path, read_only=True)
+        sheet_names = wb.sheetnames
+        wb.close()
+    except Exception:
+        sheet_names = []
+
     try:
         df = pl.read_excel(file_path, sheet_id=sheet_id)
-        
-        output = f"""Excel Sheet {sheet_id} Summary:
-- Total rows: {len(df)}
-- Columns: {df.columns}
+        sheet_label = sheet_names[sheet_id] if sheet_id < len(sheet_names) else str(sheet_id)
 
-Data (first 20 rows):
-{df.head(20)}
-"""
+        output = f"Excel File — Available sheets: {sheet_names}\n\n"
+        output += f"Sheet {sheet_id} ('{sheet_label}') — {len(df)} rows, {len(df.columns)} columns\n"
+        output += f"Columns: {df.columns}\n\n"
+        output += f"Column Statistics:\n{df.describe()}\n\n"
+        output += f"Data (first 20 rows):\n{df.head(20)}"
         if len(df) <= 50:
-            output += f"\nComplete data:\n{df}"
-        
+            output += f"\n\nComplete data:\n{df}"
         return output
     except Exception as e:
         return f"Error reading Excel: {e}"
@@ -424,16 +483,9 @@ def transcribe_audio(file_path: str) -> str:
     Returns:
         The transcribed text from the audio.
     """
-    from transformers import pipeline
-    
     try:
-        transcriber = pipeline(
-            "automatic-speech-recognition", 
-            model="openai/whisper-base",
-            chunk_length_s=30
-        )
-        result = transcriber(file_path)
-        return f"Audio Transcription:\n{result['text']}"
+        result = _hf_client.automatic_speech_recognition(audio=file_path, model=_asr_model_name)
+        return f"Audio Transcription:\n{result.text}"
     except Exception as e:
         return f"Error transcribing audio: {e}"
 
@@ -502,35 +554,6 @@ def extract_zip(file_path: str) -> str:
 
 
 # ============================================
-# Image Processing Tools
-# ============================================
-
-@tool
-def describe_image(file_path: str) -> str:
-    """
-    Get basic information about an image file (JPG, PNG).
-    
-    Args:
-        file_path: Path to the image file.
-        
-    Returns:
-        Image metadata including format, size, and mode.
-    """
-    from PIL import Image
-    
-    try:
-        img = Image.open(file_path)
-        return f"""Image Information:
-- File: {Path(file_path).name}
-- Format: {img.format}
-- Size: {img.size[0]} x {img.size[1]} pixels
-- Mode: {img.mode}
-"""
-    except Exception as e:
-        return f"Error describing image: {e}"
-
-
-# ============================================
 # Generic File Processing
 # ============================================
 
@@ -539,7 +562,7 @@ def read_file(file_path: str) -> str:
     """
     Automatically read a file based on its extension.
     
-    Supported formats: PDF, DOCX, PPTX, TXT, CSV, XLSX, JSONLD, PDB, PY, MP3, ZIP, JPG, PNG
+    Supported formats: PDF, DOCX, PPTX, TXT, CSV, XLSX, JSON-LD, PDB, Python, ZIP, JPG, JPEG, PNG, MP3, WAV, FLAC, OGG, M4A
     
     Args:
         file_path: Path to the file to read.
@@ -560,10 +583,14 @@ def read_file(file_path: str) -> str:
         '.pdb': lambda p: read_pdb.invoke(p),
         '.py': lambda p: read_python_file.invoke(p),
         '.mp3': lambda p: transcribe_audio.invoke(p),
+        '.wav': lambda p: transcribe_audio.invoke(p),
+        '.flac': lambda p: transcribe_audio.invoke(p),
+        '.ogg': lambda p: transcribe_audio.invoke(p),
+        '.m4a': lambda p: transcribe_audio.invoke(p),
         '.zip': lambda p: extract_zip.invoke(p),
-        '.jpg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}), #??
-        '.jpeg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}), #??
-        '.png': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}), #??
+        '.jpg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}),
+        '.jpeg': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}),
+        '.png': lambda p: analyze_image.invoke({"image_path": p, "question": "Describe this image in detail."}),
     }
     
     processor = processors.get(ext)
@@ -583,6 +610,8 @@ tools_list = [
     wiki_search,
     arxiv_search,
     tavily_web_search,
+    fetch_webpage,
+    python_eval,
     read_pdf,
     read_docx,
     read_pptx,
@@ -594,7 +623,6 @@ tools_list = [
     transcribe_audio,
     read_python_file,
     extract_zip,
-    # describe_image,
     analyze_image,
     read_file,
 ]
