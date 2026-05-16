@@ -38,10 +38,14 @@ librosa>=0.10.0
 soundfile>=0.12.0
 
 # Web tools
-duckduckgo-search>=4.0.0
+ddgs>=9.0.0
 tavily-python>=0.5.0
 wikipedia>=1.4.0
 arxiv>=2.1.0
+trafilatura>=1.6.0
+
+# Excel
+openpyxl>=3.1.0
 
 # Utilities
 python-dotenv>=1.2.1
