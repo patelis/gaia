@@ -19,7 +19,7 @@ models:
   reranker:
     model_name: "Alibaba-NLP/gte-reranker-modernbert-base"  # Hugging Face model ID for reranking
   llm:
-    model_name: "Qwen/Qwen3-32B-Instruct"  # Hugging Face model ID
+    model_name: "Qwen/Qwen3-32B"  # Hugging Face model ID
     parameters:
       temperature: 0
       repetition_penalty: 1.3
