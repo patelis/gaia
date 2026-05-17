@@ -37,8 +37,6 @@ models:
       
 graph:
   recursion_limit: 20                     # Max steps before the graph terminates
-  thread_id: "default-user"               # Default session identifier
-  memory_type: "sqlite"                   # Persistence method for checkpointers
 
 api:
   base_url: "https://agents-course-unit4-scoring.hf.space"

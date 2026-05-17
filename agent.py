@@ -14,14 +14,13 @@ import requests
 from pathlib import Path
 from dotenv import load_dotenv
 
-from pydantic import BaseModel, Field
-
 from langgraph.graph import START, END, StateGraph
 from langgraph.prebuilt import tools_condition, ToolNode
 
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
 from supabase.client import Client, create_client
 
 from utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion
@@ -79,19 +78,20 @@ _system_prompt = load_prompt("prompts/prompt.yaml")
 _thinking_enabled = config["models"]["llm"]["parameters"].get("thinking_enabled", True)
 
 
-class FinalAnswer(BaseModel):
-    """Strict GAIA-format answer extracted from the solver's reasoning."""
-    answer: str = Field(
-        description=(
-            "The raw answer value only. "
-            "Numbers: plain digits, no commas, no units, no symbols (write '1000000', not '1,000,000' or '$50'). "
-            "Strings: no articles ('a', 'an', 'the'), no markdown, no surrounding quotes, no trailing punctuation. "
-            "Lists: comma-separated with no extra spaces, in the order requested by the question."
-        )
-    )
+@tool
+def emit_final_answer(answer: str) -> str:
+    """Emit the final answer to the GAIA question in the strict scoring format.
+
+    Args:
+        answer: The raw answer value only.
+            Numbers: plain digits, no commas, no units, no symbols (write '1000000', not '1,000,000' or '$50').
+            Strings: no articles ('a', 'an', 'the'), no markdown, no surrounding quotes, no trailing punctuation.
+            Lists: comma-separated with no extra spaces, in the order requested by the question.
+    """
+    return answer
 
 
-formatter_llm = agent_llm.with_structured_output(FinalAnswer)
+formatter_llm = agent_llm.bind_tools([emit_final_answer], tool_choice="emit_final_answer")
 
 
 # ============================================
@@ -304,20 +304,27 @@ def formatter_node(state: AgentState) -> AgentState:
 
     prompt = [
         SystemMessage(content=(
-            "You extract the final answer from an agent's reasoning. "
-            "Apply the GAIA formatting rules exactly. "
-            "If the agent never produced an answer, return an empty string."
+            "You extract the final answer from an agent's reasoning and apply the GAIA "
+            "formatting rules exactly. You MUST call the `emit_final_answer` tool with "
+            "the extracted value. If the agent never produced an answer, call it with an "
+            "empty string."
         )),
         HumanMessage(content=(
             f"Question:\n{question}\n\n"
             f"Agent reasoning and conclusion:\n{solver_output}\n\n"
-            "Extract the final answer."
+            "Extract the final answer and call emit_final_answer."
         )),
     ]
 
     try:
         result = formatter_llm.invoke(prompt)
-        return {"final_answer": result.answer.strip()}
+        for tc in getattr(result, "tool_calls", None) or []:
+            if tc.get("name") == "emit_final_answer":
+                return {"final_answer": str(tc.get("args", {}).get("answer", "")).strip()}
+        # Model returned text instead of calling the tool — regex over its content.
+        content = result.content or ""
+        match = re.search(r'FINAL ANSWER:\s*(.*)', content, re.DOTALL | re.IGNORECASE)
+        return {"final_answer": (match.group(1).strip() if match else content.strip())}
     except Exception as e:
         print(f"Formatter error: {e}")
         match = re.search(r'FINAL ANSWER:\s*(.*)', solver_output, re.DOTALL | re.IGNORECASE)

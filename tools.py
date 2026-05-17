@@ -135,13 +135,13 @@ def fetch_webpage(url: str) -> str:
     try:
         downloaded = trafilatura.fetch_url(url)
         if downloaded is None:
-            return f"Error: Could not fetch {url}"
+            return f"[fetch_webpage] could not fetch {url}"
         text = trafilatura.extract(downloaded, include_tables=True, include_links=False)
         if text is None:
-            return f"Error: Could not extract content from {url}"
+            return f"[fetch_webpage] could not extract content from {url}"
         return f"Page content from {url}:\n\n{text}"
     except Exception as e:
-        return f"Error fetching webpage: {e}"
+        return f"[fetch_webpage] failed: {e}"
 
 
 @tool
@@ -169,11 +169,11 @@ def python_eval(code: str) -> str:
         os.unlink(tmp_path)
         if result.returncode == 0:
             return f"Output:\n{result.stdout}"
-        return f"Error (exit {result.returncode}):\n{result.stderr}"
+        return f"[python_eval] exit {result.returncode}:\n{result.stderr}"
     except subprocess.TimeoutExpired:
-        return "Error: execution timed out (30s limit)"
+        return "[python_eval] execution timed out (30s limit)"
     except Exception as e:
-        return f"Error: {e}"
+        return f"[python_eval] failed: {e}"
 
 
 # ============================================
@@ -194,7 +194,7 @@ def analyze_image(image_path: str, question: str) -> str:
     """
     try:
         if not os.path.exists(image_path):
-            return f"Error: Image file not found at {image_path}"
+            return f"[analyze_image] image file not found at {image_path}"
 
         with open(image_path, "rb") as img_file:
             image_data = base64.b64encode(img_file.read()).decode("utf-8")
@@ -221,7 +221,7 @@ def analyze_image(image_path: str, question: str) -> str:
         return output.choices[0].message.content
 
     except Exception as e:
-        return f"Error analyzing image with VLM: {str(e)}"
+        return f"[analyze_image] VLM call failed: {e}"
 
 
 # ============================================
@@ -251,7 +251,7 @@ def read_pdf(file_path: str) -> str:
         
         return "\n\n".join(text) if text else "[Empty PDF]"
     except Exception as e:
-        return f"Error reading PDF: {e}"
+        return f"[read_pdf] failed to read PDF: {e}"
 
 
 @tool
@@ -283,7 +283,7 @@ def read_docx(file_path: str) -> str:
 
         return "\n\n".join(text_parts) if text_parts else "[Empty document]"
     except Exception as e:
-        return f"Error reading DOCX: {e}"
+        return f"[read_docx] failed to read DOCX: {e}"
 
 
 @tool
@@ -313,7 +313,7 @@ def read_pptx(file_path: str) -> str:
         
         return "\n\n".join(text) if text else "[Empty presentation]"
     except Exception as e:
-        return f"Error reading PPTX: {e}"
+        return f"[read_pptx] failed to read PPTX: {e}"
 
 
 @tool
@@ -331,7 +331,7 @@ def read_text_file(file_path: str) -> str:
         with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             return f.read()
     except Exception as e:
-        return f"Error reading text file: {e}"
+        return f"[read_text_file] failed: {e}"
 
 
 # ============================================
@@ -362,7 +362,7 @@ def read_csv(file_path: str) -> str:
             output += f"\n\nComplete data:\n{df}"
         return output
     except Exception as e:
-        return f"Error reading CSV: {e}"
+        return f"[read_csv] failed to read CSV: {e}"
 
 
 @tool
@@ -400,7 +400,7 @@ def read_excel(file_path: str, sheet_id: int = 0) -> str:
             output += f"\n\nComplete data:\n{df}"
         return output
     except Exception as e:
-        return f"Error reading Excel: {e}"
+        return f"[read_excel] failed to read Excel: {e}"
 
 
 @tool
@@ -419,7 +419,7 @@ def read_jsonld(file_path: str) -> str:
             data = json.load(f)
         return f"JSON-LD Content:\n{json.dumps(data, indent=2)}"
     except Exception as e:
-        return f"Error reading JSON-LD: {e}"
+        return f"[read_jsonld] failed to read JSON-LD: {e}"
 
 
 @tool
@@ -465,7 +465,7 @@ def read_pdb(file_path: str) -> str:
         
         return "\n".join(info)
     except Exception as e:
-        return f"Error reading PDB: {e}"
+        return f"[read_pdb] failed to read PDB: {e}"
 
 
 # ============================================
@@ -487,7 +487,7 @@ def transcribe_audio(file_path: str) -> str:
         result = _hf_client.automatic_speech_recognition(audio=file_path, model=_asr_model_name)
         return f"Audio Transcription:\n{result.text}"
     except Exception as e:
-        return f"Error transcribing audio: {e}"
+        return f"[transcribe_audio] failed: {e}"
 
 
 # ============================================
@@ -510,7 +510,7 @@ def read_python_file(file_path: str) -> str:
             code = f.read()
         return f"Python Code:\n```python\n{code}\n```"
     except Exception as e:
-        return f"Error reading Python file: {e}"
+        return f"[read_python_file] failed: {e}"
 
 
 # ============================================
@@ -550,7 +550,7 @@ def extract_zip(file_path: str) -> str:
         
         return "\n".join(results)
     except Exception as e:
-        return f"Error extracting ZIP: {e}"
+        return f"[extract_zip] failed: {e}"
 
 
 # ============================================
