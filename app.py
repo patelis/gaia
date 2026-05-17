@@ -4,8 +4,8 @@ import requests
 import inspect
 import pandas as pd
 from langchain_core.messages import HumanMessage
-from agent import agent_graph
-from utils import extract_final_answer
+from gaia.agent import agent_graph
+from gaia.utils import extract_final_answer
 
 # (Keep Constants as is)
 # --- Constants ---

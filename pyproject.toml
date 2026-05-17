@@ -53,3 +53,6 @@ dependencies = [
     "ipywidgets>=8.1.8",
     "torch>=2.9.1",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["gaia"]

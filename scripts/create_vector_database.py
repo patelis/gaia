@@ -11,7 +11,7 @@ import json
 from dotenv import load_dotenv
 from supabase.client import Client, create_client
 from sentence_transformers import SentenceTransformer
-from utils import load_config
+from gaia.utils import load_config
 
 load_dotenv()
 

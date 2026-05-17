@@ -22,9 +22,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from supabase.client import Client, create_client
 
-from utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion, extract_final_answer
-from tools import tools_list
-from states import AgentState
+from gaia.utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion, extract_final_answer
+from gaia.tools import tools_list
+from gaia.states import AgentState
 
 load_dotenv()
 config = load_config()
@@ -73,7 +73,8 @@ llm = HuggingFaceEndpoint(
 agent_llm = ChatHuggingFace(llm=llm)
 agent_with_tools = agent_llm.bind_tools(tools_list)
 
-_system_prompt = load_prompt("prompts/prompt.yaml")
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+_system_prompt = load_prompt(str(_PROMPTS_DIR / "prompt.yaml"))
 _thinking_enabled = config["models"]["llm"]["parameters"].get("thinking_enabled", True)
 
 
