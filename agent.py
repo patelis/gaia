@@ -8,10 +8,13 @@ This module defines a LangGraph agent that can:
 """
 
 import os
+import re
 import bm25s
 import requests
 from pathlib import Path
 from dotenv import load_dotenv
+
+from pydantic import BaseModel, Field
 
 from langgraph.graph import START, END, StateGraph
 from langgraph.prebuilt import tools_condition, ToolNode
@@ -74,6 +77,21 @@ agent_with_tools = agent_llm.bind_tools(tools_list)
 
 _system_prompt = load_prompt("prompts/prompt.yaml")
 _thinking_enabled = config["models"]["llm"]["parameters"].get("thinking_enabled", True)
+
+
+class FinalAnswer(BaseModel):
+    """Strict GAIA-format answer extracted from the solver's reasoning."""
+    answer: str = Field(
+        description=(
+            "The raw answer value only. "
+            "Numbers: plain digits, no commas, no units, no symbols (write '1000000', not '1,000,000' or '$50'). "
+            "Strings: no articles ('a', 'an', 'the'), no markdown, no surrounding quotes, no trailing punctuation. "
+            "Lists: comma-separated with no extra spaces, in the order requested by the question."
+        )
+    )
+
+
+formatter_llm = agent_llm.with_structured_output(FinalAnswer)
 
 
 # ============================================
@@ -265,8 +283,45 @@ def processor_node(state: AgentState) -> AgentState:
     full_messages.extend(messages)
     
     response = agent_with_tools.invoke(full_messages)
-    
+
     return {"messages": [response]}
+
+
+def formatter_node(state: AgentState) -> AgentState:
+    """Extract and reformat the solver's answer into a strict GAIA-compliant value."""
+    print("--- FORMATTER NODE ---")
+    messages = state.get("messages", [])
+    if not messages:
+        return {"final_answer": ""}
+
+    question = ""
+    for m in messages:
+        if isinstance(m, HumanMessage):
+            question = m.content
+            break
+
+    solver_output = messages[-1].content or ""
+
+    prompt = [
+        SystemMessage(content=(
+            "You extract the final answer from an agent's reasoning. "
+            "Apply the GAIA formatting rules exactly. "
+            "If the agent never produced an answer, return an empty string."
+        )),
+        HumanMessage(content=(
+            f"Question:\n{question}\n\n"
+            f"Agent reasoning and conclusion:\n{solver_output}\n\n"
+            "Extract the final answer."
+        )),
+    ]
+
+    try:
+        result = formatter_llm.invoke(prompt)
+        return {"final_answer": result.answer.strip()}
+    except Exception as e:
+        print(f"Formatter error: {e}")
+        match = re.search(r'FINAL ANSWER:\s*(.*)', solver_output, re.DOTALL | re.IGNORECASE)
+        return {"final_answer": (match.group(1).strip() if match else solver_output.strip())}
 
 
 # ============================================
@@ -285,14 +340,20 @@ def agent_graph():
     workflow.add_node("reranker_node", reranker_node)
     workflow.add_node("processor_node", processor_node)
     workflow.add_node("tools", ToolNode(tools_list))
+    workflow.add_node("formatter_node", formatter_node)
 
     # Add edges
     workflow.add_edge(START, "file_downloader_node")
     workflow.add_edge("file_downloader_node", "retriever_node")
     workflow.add_edge("retriever_node", "reranker_node")
     workflow.add_edge("reranker_node", "processor_node")
-    workflow.add_edge("tools", "processor_node")    
-    workflow.add_conditional_edges("processor_node", tools_condition, {"tools": "tools", END: END})
+    workflow.add_edge("tools", "processor_node")
+    workflow.add_conditional_edges(
+        "processor_node",
+        tools_condition,
+        {"tools": "tools", END: "formatter_node"},
+    )
+    workflow.add_edge("formatter_node", END)
     
     
     compiled = workflow.compile()

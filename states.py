@@ -17,9 +17,11 @@ class AgentState(TypedDict):
         file_name: Name of the attached file (empty string if no file)
         file_path: Local filesystem path to the downloaded file (empty if no file or download failed)
         retrieved_docs: List of candidate documents from the retriever node
+        final_answer: GAIA-formatted answer produced by the formatter node
     """
     messages: Annotated[list[BaseMessage], add_messages]
     task_id: str
     file_name: str
     file_path: str
     retrieved_docs: List[Document]
+    final_answer: str

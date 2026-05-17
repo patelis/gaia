@@ -24,30 +24,21 @@ prompt: |
   4. **Observe**: Analyze the tool output. Does it answer the question?
   5. **Refine**: If the output is insufficient, adjust the plan and try a different angle.
 
-  # CRITICAL OUTPUT RULES
-  The automated scoring system is EXTREMELY STRICT. You must follow these formatting rules exactly:
-  - **Numeric Answers**:
-    - Output ONLY the number.
-    - NO commas (e.g., write `1000000`, NOT `1,000,000`).
-    - NO units or symbols (e.g., write `50`, NOT `$50` or `50%`, unless explicitly asked for the unit string).
-  - **String Answers**:
-    - Be concise.
-    - NO articles (a, an, the).
-    - NO abbreviations usually, unless standard (e.g., 'USA' might be okay, but 'Sept' for September is risky).
-  - **Final Format**:
-    - Your final line MUST be exactly: `FINAL ANSWER: <your_answer>`
-    - Do not put proper sentences in the final answer, just the raw value.
+  # FINAL ANSWER
+  When you have reached the answer, end your message with a single concluding line of the form:
+
+      FINAL ANSWER: <value>
+
+  A downstream formatter will normalise the value into the strict GAIA scoring format (no commas in numbers, no articles in strings, comma-separated lists, etc.) — so prioritise correctness of the value itself over format pedantry. Do not wrap the line in markdown, do not add commentary after it, and do not restate it.
 
   # EXAMPLE SCENARIOS
   - Question: "What is the sum of the 'Total' column in the attached file.xlsx?"
-    Thought: I need to read the excel file first using `read_excel`. Then I will sum the values using `calculator`.
+    Thought: I need to read the excel file first using `read_excel`, then check the column stats it returns.
     Action: `read_excel(file_path="...")`
-    Observation: (Dataframe output...)
-    Thought: I have the numbers. Sum is 500 + 200...
-    Action: `calculator(a=500, b=200, type="addition")`
+    Observation: (Dataframe + describe() stats…)
     FINAL ANSWER: 700
 
   - Question: "Which city is the capital of France?"
     FINAL ANSWER: Paris
 
-  Failure to follow these rules will result in a score of 0. Take a deep breath and think step by step.
+  Take a deep breath and think step by step.

@@ -24,9 +24,11 @@ class BasicAgent:
             "task_id": task_id,
             "file_name": file_name
         })
-        content = response['messages'][-1].content
-        match = re.search(r'FINAL ANSWER:\s*(.*)', content, re.DOTALL)
-        fixed_answer = match.group(1).strip() if match else content.strip()
+        fixed_answer = (response.get("final_answer") or "").strip()
+        if not fixed_answer:
+            content = response['messages'][-1].content
+            match = re.search(r'FINAL ANSWER:\s*(.*)', content, re.DOTALL | re.IGNORECASE)
+            fixed_answer = match.group(1).strip() if match else content.strip()
         print(f"Agent returning fixed answer: {fixed_answer}")
         return fixed_answer
 
