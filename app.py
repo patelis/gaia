@@ -1,11 +1,11 @@
 import os
-import re
 import gradio as gr
 import requests
 import inspect
 import pandas as pd
 from langchain_core.messages import HumanMessage
 from agent import agent_graph
+from utils import extract_final_answer
 
 # (Keep Constants as is)
 # --- Constants ---
@@ -26,9 +26,7 @@ class BasicAgent:
         })
         fixed_answer = (response.get("final_answer") or "").strip()
         if not fixed_answer:
-            content = response['messages'][-1].content
-            match = re.search(r'FINAL ANSWER:\s*(.*)', content, re.DOTALL | re.IGNORECASE)
-            fixed_answer = match.group(1).strip() if match else content.strip()
+            fixed_answer = extract_final_answer(response['messages'][-1].content)
         print(f"Agent returning fixed answer: {fixed_answer}")
         return fixed_answer
 

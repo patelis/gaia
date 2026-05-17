@@ -1,9 +1,35 @@
 import os
+import re
 import json
 import bm25s
 import yaml
 from pathlib import Path
 from langchain_core.messages import SystemMessage
+
+
+_YOUTUBE_ID_RE = re.compile(
+    r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/v/|youtube\.com/shorts/)([\w-]{11})'
+)
+
+
+def extract_youtube_id(url: str) -> str | None:
+    """Pull the 11-char video ID from any common YouTube URL form, or accept a bare ID."""
+    m = _YOUTUBE_ID_RE.search(url)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r'[\w-]{11}', url.strip()):
+        return url.strip()
+    return None
+
+
+_FINAL_ANSWER_RE = re.compile(r'FINAL ANSWER:\s*(.*)', re.DOTALL | re.IGNORECASE)
+
+
+def extract_final_answer(content: str) -> str:
+    """Pull the value after 'FINAL ANSWER:' (case-insensitive), or return the content stripped."""
+    content = content or ""
+    m = _FINAL_ANSWER_RE.search(content)
+    return (m.group(1) if m else content).strip()
 
 
 def load_config(path="config.yaml"):

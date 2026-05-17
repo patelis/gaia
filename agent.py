@@ -8,7 +8,6 @@ This module defines a LangGraph agent that can:
 """
 
 import os
-import re
 import bm25s
 import requests
 from pathlib import Path
@@ -23,7 +22,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from supabase.client import Client, create_client
 
-from utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion
+from utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion, extract_final_answer
 from tools import tools_list
 from states import AgentState
 
@@ -321,14 +320,11 @@ def formatter_node(state: AgentState) -> AgentState:
         for tc in getattr(result, "tool_calls", None) or []:
             if tc.get("name") == "emit_final_answer":
                 return {"final_answer": str(tc.get("args", {}).get("answer", "")).strip()}
-        # Model returned text instead of calling the tool — regex over its content.
-        content = result.content or ""
-        match = re.search(r'FINAL ANSWER:\s*(.*)', content, re.DOTALL | re.IGNORECASE)
-        return {"final_answer": (match.group(1).strip() if match else content.strip())}
+        # Model returned text instead of calling the tool — fall back to regex.
+        return {"final_answer": extract_final_answer(result.content)}
     except Exception as e:
         print(f"Formatter error: {e}")
-        match = re.search(r'FINAL ANSWER:\s*(.*)', solver_output, re.DOTALL | re.IGNORECASE)
-        return {"final_answer": (match.group(1).strip() if match else solver_output.strip())}
+        return {"final_answer": extract_final_answer(solver_output)}
 
 
 # ============================================

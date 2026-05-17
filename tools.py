@@ -14,7 +14,7 @@ from langchain_core.tools import tool
 
 from huggingface_hub import InferenceClient
 
-from utils import load_config, load_prompt
+from utils import load_config, load_prompt, extract_youtube_id
 
 _config = load_config()
 _vlm_model_name = _config["models"]["vlm"]["model_name"]
@@ -142,6 +142,55 @@ def fetch_webpage(url: str) -> str:
         return f"Page content from {url}:\n\n{text}"
     except Exception as e:
         return f"[fetch_webpage] failed: {e}"
+
+
+@tool
+def youtube_transcript(url: str) -> str:
+    """Fetch the transcript (captions) of a YouTube video as plain text.
+
+    Use this whenever a question references a YouTube URL — the spoken content of
+    the video is available via captions. Note: this returns text only; questions
+    that require visual analysis of the frames cannot be answered from the
+    transcript alone.
+
+    Prefers manually-written English captions; falls back to auto-generated English,
+    and finally to any available language.
+
+    Args:
+        url: The full YouTube URL (watch, youtu.be, embed, shorts) or a bare 11-char video ID.
+
+    Returns:
+        The concatenated transcript text, or an error string starting with `[youtube_transcript]`.
+    """
+    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api._errors import (
+        TranscriptsDisabled, NoTranscriptFound, VideoUnavailable,
+    )
+
+    video_id = extract_youtube_id(url)
+    if not video_id:
+        return f"[youtube_transcript] could not parse video ID from: {url}"
+
+    try:
+        ytt_api = YouTubeTranscriptApi()
+        try:
+            fetched = ytt_api.fetch(video_id, languages=['en'])
+        except NoTranscriptFound:
+            # No English at all — grab the first available language
+            transcript_list = ytt_api.list(video_id)
+            transcript = next(iter(transcript_list))
+            fetched = transcript.fetch()
+
+        text = " ".join(snippet.text for snippet in fetched)
+        return f"YouTube transcript for {url}:\n\n{text}"
+    except TranscriptsDisabled:
+        return f"[youtube_transcript] transcripts are disabled for {url}"
+    except VideoUnavailable:
+        return f"[youtube_transcript] video unavailable: {url}"
+    except NoTranscriptFound:
+        return f"[youtube_transcript] no transcript found for {url}"
+    except Exception as e:
+        return f"[youtube_transcript] failed: {e}"
 
 
 @tool
@@ -611,6 +660,7 @@ tools_list = [
     arxiv_search,
     tavily_web_search,
     fetch_webpage,
+    youtube_transcript,
     python_eval,
     read_pdf,
     read_docx,

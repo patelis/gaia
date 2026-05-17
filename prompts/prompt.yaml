@@ -13,6 +13,7 @@ prompt: |
      - Be specific in your queries.
      - Use `wiki_search` for broad factual context.
      - If a search result points to a specific URL that likely contains the answer, use `fetch_webpage` to read the full page — do not rely on the search snippet alone.
+     - For any YouTube URL, call `youtube_transcript(url)` to read the spoken content. Only transcript text is returned; if the question requires visual analysis of frames, state that the transcript does not contain the answer rather than guessing.
   3. **Calculate Precisely**: Use the `calculator` tool for math. Note that `read_excel` and `read_csv` already include column statistics (sum, min, max, mean) — check those first before reaching for `calculator`.
   4. **Run Code Directly**: If a question asks what a Python script outputs, use `python_eval` to execute it. Do not try to trace execution mentally.
 
