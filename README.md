@@ -23,7 +23,7 @@ The solver model is **`Qwen/Qwen3-32B`** via Hugging Face Inference Providers; t
 - **📂 Multi-modal file processing**:
   - **Documents**: PDF, Word (`.docx`), PowerPoint (`.pptx`), Text
   - **Data**: Excel (`.xlsx`, multi-sheet), CSV, JSON-LD, PDB (Protein Data Bank)
-  - **Media**: Audio transcription (`distil-whisper/distil-large-v3` via HF), image analysis (`Qwen/Qwen3-VL-32B-Instruct`)
+  - **Media**: Audio transcription (`openai/whisper-large-v3` via HF), image analysis (`Qwen/Qwen3-VL-32B-Instruct`)
   - **Code**: Python source files (read & execute)
   - **Archives**: ZIP extraction + inspection
 - **🔍 Hybrid RAG**: Vector search (Supabase RPC over `Alibaba-NLP/gte-modernbert-base`) **+** BM25 over a local 165-question corpus, fused with Reciprocal Rank Fusion, then reranked with a ModernBERT cross-encoder.
@@ -58,7 +58,7 @@ graph TD
 | Category | Libraries | Purpose |
 | :--- | :--- | :--- |
 | **Orchestration** | `langgraph`, `langchain`, `langchain-huggingface` | State graph, tool binding, structured output. |
-| **LLM / VLM / ASR** | `huggingface_hub` Inference API | `Qwen/Qwen3-32B`, `Qwen/Qwen3-VL-32B-Instruct`, `distil-whisper/distil-large-v3`. |
+| **LLM / VLM / ASR** | `huggingface_hub` Inference API | `Qwen/Qwen3-32B`, `Qwen/Qwen3-VL-32B-Instruct`, `openai/whisper-large-v3`. |
 | **Embeddings & Vector Store** | `sentence-transformers`, `supabase` | Semantic search via `Alibaba-NLP/gte-modernbert-base`. |
 | **Keyword search** | `bm25s` | Local BM25 index over the 165-question GAIA corpus. |
 | **Documents** | `pypdf`, `python-docx`, `python-pptx`, `openpyxl` | Office formats. |

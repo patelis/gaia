@@ -28,7 +28,7 @@ models:
   vlm:
     model_name: "Qwen/Qwen3-VL-32B-Instruct"  # Hugging Face model ID
   asr:
-    model_name: "distil-whisper/distil-large-v3"  # Hugging Face model ID
+    model_name: "openai/whisper-large-v3"  # Hugging Face model ID — must have a provider on HF Inference Providers
     #device: "cuda"                          # cpu, cuda, or mps (for Mac)
     #parameters:
     #  temperature: 0.7

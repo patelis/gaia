@@ -75,10 +75,22 @@ def transcribe_audio(file_path: str) -> str:
         file_path: Path to the audio file to transcribe.
 
     Returns:
-        The transcribed text from the audio.
+        The transcribed text from the audio, or a detailed `[transcribe_audio] ...`
+        error string identifying file path, size, model, and exception class+message.
     """
+    if not os.path.exists(file_path):
+        return f"[transcribe_audio] file not found at {file_path}"
+    file_size = os.path.getsize(file_path)
+    if file_size == 0:
+        return f"[transcribe_audio] file is empty at {file_path}"
+
     try:
-        result = _hf_client.automatic_speech_recognition(audio=file_path, model=_asr_model_name)
+        with open(file_path, "rb") as f:
+            audio_bytes = f.read()
+        result = _hf_client.automatic_speech_recognition(audio=audio_bytes, model=_asr_model_name)
         return f"Audio Transcription:\n{result.text}"
     except Exception as e:
-        return f"[transcribe_audio] failed: {e}"
+        return (
+            f"[transcribe_audio] ASR call failed for {file_path} ({file_size} bytes) "
+            f"with model '{_asr_model_name}': {type(e).__name__}: {e}"
+        )
