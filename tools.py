@@ -72,7 +72,7 @@ def duck_web_search(query: str) -> str:
     Args:
         query: The search query.
     """
-    search = _get_ddg().invoke(query=query)
+    search = _get_ddg().invoke(input=query)
     
     return {"duckduckgo_web_search": search}
 
