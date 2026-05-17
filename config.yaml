@@ -36,7 +36,7 @@ models:
     #  repetition_penalty: 1.1
       
 graph:
-  recursion_limit: 20                     # Max steps before the graph terminates
+  recursion_limit: 40                     # Max graph-node visits before bailing. ~5 + 2*(tool calls), so 40 ≈ 17 tool calls.
 
 api:
   base_url: "https://agents-course-unit4-scoring.hf.space"

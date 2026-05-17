@@ -9,7 +9,6 @@ This module defines a LangGraph agent that can:
 
 import os
 import bm25s
-import requests
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -22,7 +21,10 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from supabase.client import Client, create_client
 
-from gaia.utils import load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion, extract_final_answer
+from gaia.utils import (
+    load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion,
+    extract_final_answer, download_task_file,
+)
 from gaia.tools import tools_list
 from gaia.states import AgentState
 
@@ -101,7 +103,8 @@ formatter_llm = agent_llm.bind_tools([emit_final_answer], tool_choice="emit_fina
 def file_downloader_node(state: AgentState) -> AgentState:
     """
     Download the task file from the scoring API if one is associated with the question.
-    Saves to a local directory and stores the path in state.
+    Saves to a local directory and stores the path in state. Detailed failure
+    diagnostics are logged so HF Space logs reveal the actual cause (network, HTTP, filesystem).
     """
     print("--- FILE DOWNLOADER NODE ---")
     file_name = state.get("file_name", "")
@@ -110,32 +113,17 @@ def file_downloader_node(state: AgentState) -> AgentState:
     if not file_name or not task_id:
         return {"file_path": ""}
 
-    safe_name = Path(file_name).name
-    if not safe_name:
-        print(f"File download skipped: invalid file_name '{file_name}'")
-        return {"file_path": ""}
-
-    save_dir = Path(config["api"]["files_dir"]) / task_id
-    save_dir.mkdir(parents=True, exist_ok=True)
-    local_path = save_dir / safe_name
-
-    if local_path.exists():
-        print(f"File already cached: {local_path}")
-        return {"file_path": str(local_path)}
-
-    file_url = f"{config['api']['base_url']}/files/{task_id}"
-    try:
-        response = requests.get(file_url, timeout=30)
-        response.raise_for_status()
-        if not response.content:
-            print(f"File download failed ({file_url}): empty response body")
-            return {"file_path": ""}
-        local_path.write_bytes(response.content)
-        print(f"Downloaded: {safe_name} → {local_path}")
-        return {"file_path": str(local_path)}
-    except Exception as e:
-        print(f"File download failed ({file_url}): {e}")
-        return {"file_path": ""}
+    local_path, err = download_task_file(
+        task_id=task_id,
+        file_name=file_name,
+        base_url=config["api"]["base_url"],
+        files_dir=config["api"]["files_dir"],
+    )
+    if local_path:
+        print(f"Downloaded: {file_name} → {local_path}")
+        return {"file_path": local_path}
+    print(f"File download failed for task {task_id} ({file_name}): {err}")
+    return {"file_path": ""}
 
 
 def retriever_node(state: AgentState) -> AgentState:
@@ -264,6 +252,7 @@ def processor_node(state: AgentState) -> AgentState:
     prompt_content = _system_prompt.content + ("" if _thinking_enabled else "\n/no_think")
     system_prompt = SystemMessage(content=prompt_content)
     messages = state.get("messages", [])
+    task_id = state.get("task_id", "")
     file_name = state.get("file_name", "")
     file_path = state.get("file_path", "")
 
@@ -276,7 +265,14 @@ def processor_node(state: AgentState) -> AgentState:
             )
         else:
             file_msg = HumanMessage(
-                content=f"Note: A file named '{file_name}' is associated with this question, but it could not be downloaded."
+                content=(
+                    f"Note: A file named '{file_name}' is associated with this question "
+                    f"(task_id={task_id}), but the automatic download failed. "
+                    f"Call `retry_file_download(task_id='{task_id}', file_name='{file_name}')` "
+                    f"once to attempt it again. On success, you'll get back the local path you "
+                    f"can pass to the appropriate read tool. If retry also fails, state clearly "
+                    f"that the file is unavailable rather than fabricating data."
+                )
             )
         full_messages.append(file_msg)
     

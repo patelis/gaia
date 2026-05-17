@@ -4,7 +4,7 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_community.document_loaders import WikipediaLoader, ArxivLoader
 from langchain_core.tools import tool
 
-from gaia.utils import extract_youtube_id
+from gaia.utils import extract_youtube_id, load_config, download_task_file
 
 
 _ddg_search = None
@@ -42,13 +42,41 @@ def wiki_search(query: str) -> str:
 
     Args:
         query: The search query."""
-    documents = WikipediaLoader(query=query, load_max_docs=3).load()
+    documents = WikipediaLoader(query=query, load_max_docs=3, doc_content_chars_max=20000).load()
     processed_documents = "\n\n---\n\n".join(
         [
             f'Document title: {document.metadata.get("title", "")}. Summary: {document.metadata.get("summary", "")}. Documents details: {document.page_content}'
             for document in documents
         ])
     return {"wiki_results": processed_documents}
+
+
+@tool
+def wikipedia_page_fetch(title: str) -> str:
+    """Fetch the full text of a Wikipedia page by its exact title.
+
+    Use this when you can guess the page title from the question (e.g., "1928 Summer
+    Olympics", "List of Featured Articles"). Faster than search + fetch_webpage when
+    the title is obvious. Returns full page content, not a search summary.
+
+    Args:
+        title: The exact Wikipedia page title (including namespace prefix if applicable,
+               e.g., "Wikipedia:Featured_article_candidates/Featured_log/November_2016").
+
+    Returns:
+        The page content prefixed with title and URL, or a `[wikipedia_page_fetch] ...`
+        error string.
+    """
+    import wikipedia
+    try:
+        page = wikipedia.page(title, auto_suggest=False)
+        return f"Wikipedia: {page.title}\nURL: {page.url}\n\n{page.content}"
+    except wikipedia.exceptions.DisambiguationError as e:
+        return f"[wikipedia_page_fetch] '{title}' is a disambiguation page. Options: {e.options[:10]}"
+    except wikipedia.exceptions.PageError:
+        return f"[wikipedia_page_fetch] page not found: '{title}'. Try wiki_search to find the correct title."
+    except Exception as e:
+        return f"[wikipedia_page_fetch] failed: {e}"
 
 
 @tool
@@ -104,6 +132,33 @@ def fetch_webpage(url: str) -> str:
         return f"Page content from {url}:\n\n{text}"
     except Exception as e:
         return f"[fetch_webpage] failed: {e}"
+
+
+@tool
+def retry_file_download(task_id: str, file_name: str) -> str:
+    """Retry downloading the task file from the GAIA scoring API.
+
+    Use this when the initial automatic download failed (you will see a message like
+    "the automatic download failed" in the question context). Returns the local path
+    on success, or an error string starting with `[retry_file_download]`.
+
+    Args:
+        task_id: The task ID for the current question.
+        file_name: The original file name from the question metadata.
+
+    Returns:
+        Local filesystem path to the downloaded file, or an error description.
+    """
+    cfg = load_config()
+    local_path, err = download_task_file(
+        task_id=task_id,
+        file_name=file_name,
+        base_url=cfg["api"]["base_url"],
+        files_dir=cfg["api"]["files_dir"],
+    )
+    if local_path:
+        return local_path
+    return f"[retry_file_download] {err}"
 
 
 @tool

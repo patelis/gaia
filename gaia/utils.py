@@ -1,7 +1,9 @@
 import os
 import re
 import json
+import time
 import bm25s
+import requests
 import yaml
 from pathlib import Path
 from langchain_core.messages import SystemMessage
@@ -35,6 +37,68 @@ def extract_final_answer(content: str) -> str:
 def load_config(path="config.yaml"):
     with open(path, "r") as f:
         return yaml.safe_load(f)
+
+
+def download_task_file(
+    task_id: str,
+    file_name: str,
+    base_url: str,
+    files_dir: str,
+    max_retries: int = 3,
+    timeout: int = 30,
+) -> tuple[str | None, str]:
+    """Download a task file from the GAIA scoring API.
+
+    Returns (local_path, error_message). On success the error string is empty;
+    on failure local_path is None and the error string says what went wrong.
+    Retries on 5xx and network errors with exponential backoff (2s, 4s); 4xx
+    is treated as a definitive "no file" answer and not retried.
+    """
+    if not task_id or not file_name:
+        return None, "missing task_id or file_name"
+
+    safe_name = Path(file_name).name
+    if not safe_name:
+        return None, f"invalid file_name '{file_name}'"
+
+    try:
+        save_dir = Path(files_dir) / task_id
+        save_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return None, f"could not create cache dir: {e}"
+
+    local_path = save_dir / safe_name
+    if local_path.exists() and local_path.stat().st_size > 0:
+        return str(local_path), ""
+
+    url = f"{base_url}/files/{task_id}"
+    last_err = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(url, timeout=timeout)
+            status = response.status_code
+            if status >= 500:
+                last_err = f"HTTP {status} (attempt {attempt}/{max_retries})"
+                if attempt < max_retries:
+                    time.sleep(2 * attempt)
+                continue
+            if status >= 400:
+                return None, f"HTTP {status} from {url}"
+            if not response.content:
+                last_err = f"empty body (attempt {attempt}/{max_retries})"
+                if attempt < max_retries:
+                    time.sleep(2 * attempt)
+                continue
+            local_path.write_bytes(response.content)
+            return str(local_path), ""
+        except requests.RequestException as e:
+            last_err = f"{type(e).__name__}: {e} (attempt {attempt}/{max_retries})"
+            if attempt < max_retries:
+                time.sleep(2 * attempt)
+        except Exception as e:
+            return None, f"unexpected error: {type(e).__name__}: {e}"
+
+    return None, f"all {max_retries} attempts failed; last: {last_err}"
 
 
 def load_prompt(prompt_location: str) -> SystemMessage:
