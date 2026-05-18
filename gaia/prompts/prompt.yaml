@@ -37,6 +37,8 @@ prompt: |
 
   A downstream formatter will normalise the value into the strict GAIA scoring format (no commas in numbers, no articles in strings, comma-separated lists, etc.) — so prioritise correctness of the value itself over format pedantry. Do not wrap the line in markdown, do not add commentary after it, and do not restate it.
 
+  If you genuinely cannot determine the answer (file unavailable, all searches returned nothing useful, contradictory sources), STILL end your message with `FINAL ANSWER: ` followed by your single best guess based on whatever partial information you have — or simply `FINAL ANSWER: unknown`. NEVER submit a sentence of explanation as your final answer; always isolate the value on the `FINAL ANSWER:` line.
+
   # EXAMPLE SCENARIOS
   - Question: "What is the sum of the 'Total' column in the attached file.xlsx?"
     Thought: I need to read the excel file first using `read_excel`, then check the column stats it returns.

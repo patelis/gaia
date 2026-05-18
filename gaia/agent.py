@@ -17,13 +17,13 @@ from langgraph.prebuilt import tools_condition, ToolNode
 
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from supabase.client import Client, create_client
 
 from gaia.utils import (
     load_config, load_prompt, init_bm25_index, reciprocal_rank_fusion,
-    extract_final_answer, download_task_file,
+    extract_final_answer, _FINAL_ANSWER_RE, download_task_file,
 )
 from gaia.tools import tools_list
 from gaia.states import AgentState
@@ -277,8 +277,12 @@ def processor_node(state: AgentState) -> AgentState:
         full_messages.append(file_msg)
     
     full_messages.extend(messages)
-    
-    response = agent_with_tools.invoke(full_messages)
+
+    try:
+        response = agent_with_tools.invoke(full_messages)
+    except Exception as e:
+        print(f"Processor LLM error for task {task_id}: {type(e).__name__}: {e}")
+        response = AIMessage(content="")
 
     return {"messages": [response]}
 
@@ -321,7 +325,30 @@ def formatter_node(state: AgentState) -> AgentState:
         return {"final_answer": extract_final_answer(result.content)}
     except Exception as e:
         print(f"Formatter error: {e}")
+
+    # Retry once without tool binding — let the model respond as plain text.
+    retry_prompt = [
+        SystemMessage(content=(
+            "Extract ONLY the final answer value from the agent's reasoning. "
+            "Respond with the value alone — no prose, no labels, no quotes, no markdown. "
+            "If the agent could not determine an answer, respond with a single blank line."
+        )),
+        HumanMessage(content=(
+            f"Question:\n{question}\n\nAgent reasoning and conclusion:\n{solver_output}\n\nFinal answer value only:"
+        )),
+    ]
+    try:
+        retry = agent_llm.invoke(retry_prompt)
+        candidate = (retry.content or "").strip()
+        if candidate and len(candidate) <= 200:
+            return {"final_answer": candidate}
+    except Exception as e:
+        print(f"Formatter retry error: {e}")
+
+    # Last resort: only trust solver_output if it has an explicit FINAL ANSWER marker.
+    if _FINAL_ANSWER_RE.search(solver_output or ""):
         return {"final_answer": extract_final_answer(solver_output)}
+    return {"final_answer": ""}
 
 
 # ============================================
