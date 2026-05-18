@@ -1,6 +1,7 @@
 # Agent files
 CLAUDE.md
 notebooks/debug_agent.ipynb
+notebooks/scoring_api_explorer.ipynb
 
 # Python-generated files
 __pycache__/
