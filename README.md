@@ -118,7 +118,7 @@ python scripts/create_vector_database.py
 │   └── tools/
 │       ├── __init__.py                 # Aggregates tools_list
 │       ├── basic.py                    # calculator, python_eval
-│       ├── web.py                      # ddg / tavily / wiki / arxiv / fetch_webpage / youtube_transcript
+│       ├── web.py                      # ddg / tavily / wiki / wikipedia_page_fetch / arxiv / fetch_webpage / youtube_transcript / retry_file_download
 │       ├── files.py                    # PDF, DOCX, PPTX, TXT, CSV, XLSX, JSON-LD, PDB, Python, ZIP
 │       ├── media.py                    # analyze_image (VLM), transcribe_audio (ASR), shared HF client
 │       └── dispatcher.py               # read_file extension router
