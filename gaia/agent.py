@@ -64,11 +64,14 @@ if enable_vector_search:
 reranker = CrossEncoder(config["models"]["reranker"]["model_name"], cache_folder=config["models"]["cache_folder"])
 
 # LLM for Agent
+_llm_params = config["models"]["llm"]["parameters"]
 llm = HuggingFaceEndpoint(
     repo_id=config["models"]["llm"]["model_name"],
-    temperature=config["models"]["llm"]["parameters"]["temperature"],
-    repetition_penalty=config["models"]["llm"]["parameters"]["repetition_penalty"],
-    provider=config["models"]["llm"]["parameters"]["provider"],
+    temperature=_llm_params["temperature"],
+    repetition_penalty=_llm_params["repetition_penalty"],
+    provider=_llm_params["provider"],
+    timeout=_llm_params.get("timeout", 120),
+    max_new_tokens=_llm_params.get("max_new_tokens", 512),
     huggingfacehub_api_token=hf_key
 )
 

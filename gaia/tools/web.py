@@ -1,10 +1,26 @@
 """Web search and fetching tools: DuckDuckGo, Tavily, Wikipedia, Arxiv, webpage fetch, YouTube transcripts."""
+import re
+from datetime import datetime
+
+import requests
+import trafilatura
+import wikipedia
+from bs4 import BeautifulSoup
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_community.document_loaders import WikipediaLoader, ArxivLoader
 from langchain_core.tools import tool
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
 
 from gaia.utils import extract_youtube_id, load_config, download_task_file
+
+# Wikipedia blocks/throttles requests with the default `wikipedia` package UA, which
+# causes the API to return a non-JSON body and `requests.json()` to raise a
+# `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`. Setting an identifying
+# UA per Wikipedia's policy fixes this for both `wiki_search` and `wikipedia_page_fetch`.
+_USER_AGENT = "gaia-agent/0.1 (https://huggingface.co/spaces/KPatelis/Agents_Course_Assignment)"
+wikipedia.set_user_agent(_USER_AGENT)
 
 
 _ddg_search = None
@@ -32,51 +48,223 @@ def duck_web_search(query: str) -> str:
     Args:
         query: The search query.
     """
-    search = _get_ddg().invoke(input=query)
-    return {"duckduckgo_web_search": search}
+    try:
+        search = _get_ddg().invoke(input=query)
+        return {"duckduckgo_web_search": search}
+    except Exception as e:
+        return f"[duck_web_search] failed: {type(e).__name__}: {e}"
 
 
 @tool
 def wiki_search(query: str) -> str:
-    """Search Wikipedia for a query and return maximum 3 results.
+    """Search Wikipedia for a query and return up to 3 distinct articles.
 
     Args:
         query: The search query."""
-    documents = WikipediaLoader(query=query, load_max_docs=3, doc_content_chars_max=20000).load()
-    processed_documents = "\n\n---\n\n".join(
-        [
-            f'Document title: {document.metadata.get("title", "")}. Summary: {document.metadata.get("summary", "")}. Documents details: {document.page_content}'
-            for document in documents
-        ])
-    return {"wiki_results": processed_documents}
+    try:
+        documents = WikipediaLoader(query=query, load_max_docs=3, doc_content_chars_max=20000).load()
+        # Deduplicate by article title
+        seen_titles = set()
+        unique_documents = []
+        for d in documents:
+            title = d.metadata.get("title", "")
+            if title and title not in seen_titles:
+                seen_titles.add(title)
+                unique_documents.append(d)
+        processed_documents = "\n\n---\n\n".join(
+            [
+                f'Document title: {document.metadata.get("title", "")}. Summary: {document.metadata.get("summary", "")}. Documents details: {document.page_content}'
+                for document in unique_documents
+            ])
+        return {"wiki_results": processed_documents}
+    except Exception as e:
+        return f"[wiki_search] failed: {type(e).__name__}: {e}"
+
+
+_NAVBOX_MIN_CHARS = 200    # ignore navboxes with less than this many chars of text
+_NAVBOX_MAX_CHARS = 15000  # cap navbox text to avoid blowing up context on huge pages
+
+
+def _extract_navbox_text(html: str) -> str:
+    """Pull a flat-text dump of every ``.navbox`` div on a Wikipedia page.
+
+    Navboxes are the cross-link tables Wikipedia puts at the bottom of articles.
+    We collect every navbox on the page, flatten whitespace, and join with blank lines. 
+    Returns ``""`` if no meaningful navbox content is present.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    parts = []
+    for nb in soup.find_all("div", class_="navbox"):
+        text = re.sub(r"\s+", " ", nb.get_text(" ", strip=True))
+        if text:
+            parts.append(text)
+    joined = "\n\n".join(parts).strip()
+    if len(joined) < _NAVBOX_MIN_CHARS:
+        return ""
+    return joined[:_NAVBOX_MAX_CHARS]
 
 
 @tool
 def wikipedia_page_fetch(title: str) -> str:
-    """Fetch the full text of a Wikipedia page by its exact title.
-
-    Use this when you can guess the page title from the question (e.g., "1928 Summer
-    Olympics", "List of Featured Articles"). Faster than search + fetch_webpage when
-    the title is obvious. Returns full page content, not a search summary.
-
+    """Fetch a Wikipedia page by title and return its body + navbox text.
     Args:
-        title: The exact Wikipedia page title (including namespace prefix if applicable,
-               e.g., "Wikipedia:Featured_article_candidates/Featured_log/November_2016").
+        title: The exact Wikipedia page title, optionally with a namespace prefix
+            (e.g. ``"Wikipedia:Featured article candidates/Featured log/November 2016"``).
 
     Returns:
-        The page content prefixed with title and URL, or a `[wikipedia_page_fetch] ...`
-        error string.
+        On success: a multi-line string starting with ``"Wikipedia: <resolved title>"``,
+        a ``URL:`` line, a blank line, the extracted body, and (if present) a
+        ``--- Related (navbox) ---`` block.
+        On failure: a string starting with ``[wikipedia_page_fetch] …`` describing
+        the failure (page not found, disambiguation page, search fallback exhausted).
     """
-    import wikipedia
+
+    def _render(page, resolved_from=None):
+        suffix = f" (resolved from '{resolved_from}')" if resolved_from else ""
+        header = f"Wikipedia: {page.title}{suffix}\nURL: {page.url}"
+
+        # Body: prefer trafilatura (preserves lists and tables — critical for
+        # counting-style questions). Fall back to page.content on failure.
+        body = None
+        downloaded = trafilatura.fetch_url(page.url)
+        if downloaded is not None:
+            body = trafilatura.extract(downloaded, include_tables=True, include_links=False)
+        if not body:
+            body = page.content
+
+        # Navbox: append the cross-link tables that body extractors strip.
+        navbox_section = ""
+        try:
+            navbox_text = _extract_navbox_text(page.html())
+            if navbox_text:
+                navbox_section = f"\n\n--- Related (navbox) ---\n{navbox_text}"
+        except Exception:
+            pass
+
+        return f"{header}\n\n{body}{navbox_section}"
+
     try:
         page = wikipedia.page(title, auto_suggest=False)
-        return f"Wikipedia: {page.title}\nURL: {page.url}\n\n{page.content}"
+        return _render(page)
     except wikipedia.exceptions.DisambiguationError as e:
         return f"[wikipedia_page_fetch] '{title}' is a disambiguation page. Options: {e.options[:10]}"
     except wikipedia.exceptions.PageError:
-        return f"[wikipedia_page_fetch] page not found: '{title}'. Try wiki_search to find the correct title."
+        # Recover from case-sensitivity / slight title mismatches by searching once and
+        # fetching the top hit.
+        try:
+            hits = wikipedia.search(title, results=1)
+        except Exception as e:
+            return f"[wikipedia_page_fetch] page not found: '{title}'; search fallback failed: {e}"
+        if not hits:
+            return f"[wikipedia_page_fetch] page not found: '{title}' and no search hits."
+        resolved = hits[0]
+        if resolved == title:
+            return f"[wikipedia_page_fetch] page not found: '{title}'. Try wiki_search to find the correct title."
+        try:
+            page = wikipedia.page(resolved, auto_suggest=False)
+        except Exception as e:
+            return f"[wikipedia_page_fetch] resolved title '{resolved}' but fetch failed: {e}"
+        return _render(page, resolved_from=title)
     except Exception as e:
         return f"[wikipedia_page_fetch] failed: {e}"
+
+
+_WIKI_API_ENDPOINT = "https://en.wikipedia.org/w/api.php"
+
+
+def _resolve_revision_at(title: str, iso_timestamp: str) -> tuple[int | None, str | None, str | None]:
+    """Look up the Wikipedia revision id active for ``title`` at ``iso_timestamp``.
+    """
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "revisions",
+        "titles": title,
+        "rvprop": "ids|timestamp",
+        "rvlimit": 1,
+        "rvdir": "older",
+        "rvstart": iso_timestamp,
+    }
+    try:
+        r = requests.get(
+            _WIKI_API_ENDPOINT,
+            params=params,
+            headers={"User-Agent": _USER_AGENT},
+            timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        return None, None, f"API request failed: {type(e).__name__}: {e}"
+
+    pages = data.get("query", {}).get("pages", {})
+    if not pages:
+        return None, None, "API returned no pages"
+    page = next(iter(pages.values()))
+    if "missing" in page:
+        return None, None, f"page not found: '{title}'"
+    revisions = page.get("revisions") or []
+    if not revisions:
+        return None, None, f"no revisions for '{title}' on or before {iso_timestamp}"
+    return revisions[0]["revid"], page.get("title", title), None
+
+
+@tool
+def wikipedia_page_as_of(title: str, date: str) -> str:
+    """Fetch a Wikipedia page as it existed at end of day UTC on a specific date.
+    Args:
+        title: Wikipedia page title (e.g. ``"Taishō Tamai"``,
+            ``"Hokkaido Nippon-Ham Fighters"``, ``"1928 Summer Olympics"``).
+        date: Target date in ISO ``"YYYY-MM-DD"`` format (e.g. ``"2023-07-31"``).
+            The page is fetched as it appeared at 23:59:59 UTC on that day.
+
+    Returns:
+        On success: a multi-line string ``"Wikipedia: <title> (as of <date>, revid <id>) / URL: <oldid URL> / <body> / --- Related (navbox) ---"``.
+        On failure: a string starting with ``[wikipedia_page_as_of] …`` describing
+        the failure (invalid date, page not found, revision lookup failure,
+        rendered-HTML fetch failure).
+    """
+    try:
+        dt = datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return f"[wikipedia_page_as_of] invalid date '{date}'; expected YYYY-MM-DD."
+    iso_ts = dt.strftime("%Y-%m-%dT23:59:59Z")
+
+    revid, resolved_title, err = _resolve_revision_at(title, iso_ts)
+    if err and err.startswith("page not found"):
+        # Case-/spelling-tolerant fallback: search and retry the top hit.
+        try:
+            hits = wikipedia.search(title, results=1)
+        except Exception as e:
+            return f"[wikipedia_page_as_of] page not found and search failed: {e}"
+        if not hits or hits[0] == title:
+            return f"[wikipedia_page_as_of] page not found: '{title}'"
+        revid, resolved_title, err = _resolve_revision_at(hits[0], iso_ts)
+    if err:
+        return f"[wikipedia_page_as_of] {err}"
+
+    url = f"https://en.wikipedia.org/w/index.php?oldid={revid}"
+    try:
+        resp = requests.get(url, headers={"User-Agent": _USER_AGENT}, timeout=30)
+        resp.raise_for_status()
+        html = resp.text
+    except Exception as e:
+        return f"[wikipedia_page_as_of] could not fetch revision URL {url}: {type(e).__name__}: {e}"
+
+    body = trafilatura.extract(html, include_tables=True, include_links=False)
+    if not body:
+        return f"[wikipedia_page_as_of] no body extracted from {url}"
+
+    navbox_section = ""
+    try:
+        navbox_text = _extract_navbox_text(html)
+        if navbox_text:
+            navbox_section = f"\n\n--- Related (navbox) ---\n{navbox_text}"
+    except Exception:
+        pass
+
+    header = f"Wikipedia: {resolved_title} (as of {date}, revid {revid})\nURL: {url}"
+    return f"{header}\n\n{body}{navbox_section}"
 
 
 @tool
@@ -85,13 +273,16 @@ def arxiv_search(query: str) -> str:
 
     Args:
         query: The search query."""
-    documents = ArxivLoader(query=query, load_max_docs=3).load()
-    processed_documents = "\n\n---\n\n".join(
-        [
-            f'Document title: {document.metadata.get("title", "")}. Summary: {document.metadata.get("summary", "")}. Documents details: {document.page_content}'
-            for document in documents
-        ])
-    return {"arxiv_results": processed_documents}
+    try:
+        documents = ArxivLoader(query=query, load_max_docs=3).load()
+        processed_documents = "\n\n---\n\n".join(
+            [
+                f'Document title: {document.metadata.get("title", "")}. Summary: {document.metadata.get("summary", "")}. Documents details: {document.page_content}'
+                for document in documents
+            ])
+        return {"arxiv_results": processed_documents}
+    except Exception as e:
+        return f"[arxiv_search] failed: {type(e).__name__}: {e}"
 
 
 @tool
@@ -100,13 +291,16 @@ def tavily_web_search(query: str) -> str:
 
     Args:
         query: The search query."""
-    search_documents = _get_tavily().invoke(input=query)
-    web_results = "\n\n---\n\n".join(
-        [
-            f'Document title: {document["title"]}. Contents: {document["content"]}. Relevance Score: {document["score"]}'
-            for document in search_documents
-        ])
-    return {"web_results": web_results}
+    try:
+        search_documents = _get_tavily().invoke(input=query)
+        web_results = "\n\n---\n\n".join(
+            [
+                f'Document title: {document["title"]}. Contents: {document["content"]}. Relevance Score: {document["score"]}'
+                for document in search_documents
+            ])
+        return {"web_results": web_results}
+    except Exception as e:
+        return f"[tavily_web_search] failed: {type(e).__name__}: {e}"
 
 
 @tool
@@ -121,7 +315,6 @@ def fetch_webpage(url: str) -> str:
     Returns:
         The extracted text content of the page.
     """
-    import trafilatura
     try:
         downloaded = trafilatura.fetch_url(url)
         if downloaded is None:
@@ -137,11 +330,6 @@ def fetch_webpage(url: str) -> str:
 @tool
 def retry_file_download(task_id: str, file_name: str) -> str:
     """Retry downloading the task file from the GAIA scoring API.
-
-    Use this when the initial automatic download failed (you will see a message like
-    "the automatic download failed" in the question context). Returns the local path
-    on success, or an error string starting with `[retry_file_download]`.
-
     Args:
         task_id: The task ID for the current question.
         file_name: The original file name from the question metadata.
@@ -164,25 +352,12 @@ def retry_file_download(task_id: str, file_name: str) -> str:
 @tool
 def youtube_transcript(url: str) -> str:
     """Fetch the transcript (captions) of a YouTube video as plain text.
-
-    Use this whenever a question references a YouTube URL — the spoken content of
-    the video is available via captions. Note: this returns text only; questions
-    that require visual analysis of the frames cannot be answered from the
-    transcript alone.
-
-    Prefers manually-written English captions; falls back to auto-generated English,
-    and finally to any available language.
-
     Args:
         url: The full YouTube URL (watch, youtu.be, embed, shorts) or a bare 11-char video ID.
 
     Returns:
         The concatenated transcript text, or an error string starting with `[youtube_transcript]`.
     """
-    from youtube_transcript_api import YouTubeTranscriptApi
-    from youtube_transcript_api._errors import (
-        TranscriptsDisabled, NoTranscriptFound, VideoUnavailable,
-    )
 
     video_id = extract_youtube_id(url)
     if not video_id:

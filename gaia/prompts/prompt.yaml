@@ -14,6 +14,7 @@ prompt: |
        - If you can guess the exact page title from the question, call `wikipedia_page_fetch(title)` directly — this is the fastest path and returns the full page.
        - Otherwise, call `wiki_search` once to find candidate titles, then `wikipedia_page_fetch` on the best one.
        - Namespaced pages work too, e.g. `wikipedia_page_fetch("Wikipedia:Featured_article_candidates/Featured_log/November_2016")`.
+       - **For "as of <date>" questions** (rosters, statistics, member lists, records that may have drifted since), use `wikipedia_page_as_of(title, date)` with `date` in `YYYY-MM-DD` form — this fetches the article as it appeared at end of day UTC on that date, not the current version.
      - **General web research**: prefer `tavily_web_search` (cleaner, LLM-optimised snippets). Use `duck_web_search` only if Tavily fails.
      - **When any search result gives you a specific URL**, call `fetch_webpage` to read the full page — do not loop on snippets.
      - **Do not repeat queries** with trivial rewording. If a search did not help, switch tools or pivot (try a different angle, fetch a referenced page, or go Wikipedia-direct).

@@ -1,5 +1,6 @@
 # Agent files
 CLAUDE.md
+notebooks/debug_agent.ipynb
 
 # Python-generated files
 __pycache__/

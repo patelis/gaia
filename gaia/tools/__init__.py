@@ -2,7 +2,8 @@
 from gaia.tools.basic import calculator, python_eval
 from gaia.tools.web import (
     duck_web_search, tavily_web_search, wiki_search, wikipedia_page_fetch,
-    arxiv_search, fetch_webpage, youtube_transcript, retry_file_download,
+    wikipedia_page_as_of, arxiv_search, fetch_webpage, youtube_transcript,
+    retry_file_download,
 )
 from gaia.tools.files import (
     read_pdf, read_docx, read_pptx, read_text_file,
@@ -18,6 +19,7 @@ tools_list = [
     duck_web_search,
     wiki_search,
     wikipedia_page_fetch,
+    wikipedia_page_as_of,
     arxiv_search,
     tavily_web_search,
     fetch_webpage,
