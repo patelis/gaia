@@ -6,6 +6,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-Orchestration-orange.svg)
 ![HuggingFace](https://img.shields.io/badge/HuggingFace-Inference-yellow.svg)
 ![Supabase](https://img.shields.io/badge/Supabase-Vector_Store-green.svg)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 > [!NOTE]
 > Developed as part of the **Hugging Face Agents Course (Unit 4: GAIA)**.
@@ -131,3 +132,7 @@ python scripts/create_vector_database.py
 ```
 
 All tunable knobs — model IDs, retrieval depth, thinking mode, recursion limit — live in `config.yaml`; no code change required to swap models or tweak retrieval.
+
+## 📜 License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for the full text.

@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "GAIA Benchmark Agent with Multi-Modal File Processing"
 readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     # Core LangChain
     "langchain>=1.1.3",
@@ -52,7 +54,18 @@ dependencies = [
     "jupyter>=1.1.1",
     "ipywidgets>=8.1.8",
     "torch>=2.9.1",
+    "pytest>=9.0.3",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["gaia"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "requests-mock>=1.12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
