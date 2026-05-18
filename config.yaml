@@ -29,14 +29,8 @@ models:
     model_name: "Qwen/Qwen3-VL-32B-Instruct"  # Hugging Face model ID
   asr:
     model_name: "openai/whisper-large-v3"  # Hugging Face model ID — must have a provider on HF Inference Providers
-    #device: "cuda"                          # cpu, cuda, or mps (for Mac)
-    #parameters:
-    #  temperature: 0.7
-    #  max_new_tokens: 512
-    #  repetition_penalty: 1.1
-      
 graph:
-  recursion_limit: 40                     # Max graph-node visits before bailing. ~5 + 2*(tool calls), so 40 ≈ 17 tool calls.
+  recursion_limit: 40                     # Max graph-node visits before bailing.
 
 api:
   base_url: "https://agents-course-unit4-scoring.hf.space"
