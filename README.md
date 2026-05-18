@@ -98,6 +98,7 @@ The UI requires a Hugging Face login. Click **"Run Evaluation & Submit All Answe
 
 > [!NOTE]
 > **Known limitation — file-based questions are currently unanswerable.** As of the latest test pass, the scoring API (`GET /files/{task_id}`) returns `404 "No file path associated with task_id …"` for every task in the current round that has an attached file (chess image, audio recipes, the Python script, the fast-food sales spreadsheet). The agent recovers cleanly — it calls `retry_file_download` once and then emits `FINAL ANSWER: unknown` rather than fabricating — but those questions can't be scored until the API serves the underlying files again.
+> See https://github.com/huggingface/agents-course/issues/624 for progress on resolution of this issue.
 
 To (re)populate the Supabase vector store from the local corpus:
 
